@@ -212,6 +212,15 @@ function App() {
     return <Login onLogin={handleLogin} />
   }
 
+  // Show loading while data is being fetched after login
+  if (allMembers.length === 0) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg)' }}>
+        <p style={{ fontSize: '1.1rem', color: 'var(--text-muted)' }}>Loading data...</p>
+      </div>
+    )
+  }
+
   const userRole = session.role
   const currentMemberId = session.memberId
   const currentMember = allMembers.find(m => m.id === currentMemberId) || allMembers[0]
