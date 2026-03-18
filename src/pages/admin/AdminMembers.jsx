@@ -12,6 +12,8 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
   const [aliasInput, setAliasInput] = useState('')
   const [toast, setToast] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
+  const [sortCol, setSortCol] = useState('name')
+  const [sortDir, setSortDir] = useState('asc')
   const [newContact, setNewContact] = useState({
     firstName: '', lastName: '', email: '', phone: '',
     address: '', city: '', state: '', zip: '',
@@ -56,6 +58,49 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
     const matchSearch = `${m.firstName} ${m.lastName} ${m.email} ${aliasStr}`.toLowerCase().includes(search.toLowerCase())
     const matchType = typeFilter === 'all' || m.membershipType === typeFilter
     return matchSearch && matchType
+  })
+
+  const handleSort = (col) => {
+    if (sortCol === col) {
+      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortCol(col)
+      setSortDir('asc')
+    }
+  }
+
+  const sortArrow = (col) => sortCol === col ? (sortDir === 'asc' ? ' \u25B2' : ' \u25BC') : ''
+
+  const sorted = [...filtered].sort((a, b) => {
+    const dir = sortDir === 'asc' ? 1 : -1
+    switch (sortCol) {
+      case 'name': {
+        const nameA = `${a.lastName} ${a.firstName}`.toLowerCase()
+        const nameB = `${b.lastName} ${b.firstName}`.toLowerCase()
+        return nameA < nameB ? -dir : nameA > nameB ? dir : 0
+      }
+      case 'email':
+        return (a.email || '').toLowerCase() < (b.email || '').toLowerCase() ? -dir : dir
+      case 'type':
+        return (a.contactType || '').toLowerCase() < (b.contactType || '').toLowerCase() ? -dir : dir
+      case 'credit': {
+        const balA = (memberBalances || {})[a.id] || 0
+        const balB = (memberBalances || {})[b.id] || 0
+        return (balA - balB) * dir
+      }
+      case 'outstanding': {
+        const outA = a.pledges.filter(p => !p.paid && !p.canceled).reduce((s, p) => s + (p.amount - p.paidAmount), 0)
+        const outB = b.pledges.filter(p => !p.paid && !p.canceled).reduce((s, p) => s + (p.amount - p.paidAmount), 0)
+        return (outA - outB) * dir
+      }
+      case 'unpaid': {
+        const cntA = a.pledges.filter(p => !p.paid && !p.canceled).length
+        const cntB = b.pledges.filter(p => !p.paid && !p.canceled).length
+        return (cntA - cntB) * dir
+      }
+      default:
+        return 0
+    }
   })
 
   const getOutstanding = (member) => {
@@ -166,19 +211,19 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
           <table className="pledges-table">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Type / Plan</th>
-                <th>Credit</th>
-                <th>Outstanding</th>
-                <th>Unpaid Pledges</th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('name')}>Name{sortArrow('name')}</th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('email')}>Email{sortArrow('email')}</th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('type')}>Type / Plan{sortArrow('type')}</th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('credit')}>Credit{sortArrow('credit')}</th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('outstanding')}>Outstanding{sortArrow('outstanding')}</th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('unpaid')}>Unpaid Pledges{sortArrow('unpaid')}</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
+              {sorted.length === 0 ? (
                 <tr><td colSpan="6" className="empty-row">No members found</td></tr>
               ) : (
-                filtered.map(m => {
+                sorted.map(m => {
                   const tier = membershipTiers[m.membershipType] || { label: m.contactType || 'Contact', plans: {} }
                   const plan = tier.plans[m.membershipPlan] || { label: '', monthly: 0 }
                   const outstanding = getOutstanding(m)
