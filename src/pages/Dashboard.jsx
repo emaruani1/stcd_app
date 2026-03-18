@@ -58,8 +58,9 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
     .filter(p => new Date(p.date + 'T00:00:00') < fortyFiveDaysAgo)
     .sort((a, b) => new Date(a.date) - new Date(b.date))
 
-  const tier = membershipTiers[currentMember.membershipType] || { label: currentMember.contactType || 'Contact', plans: {} }
-  const plan = tier.plans[currentMember.membershipPlan] || { label: '', monthly: 0 }
+  const isMember = currentMember.membershipType && membershipTiers[currentMember.membershipType]
+  const tier = isMember ? membershipTiers[currentMember.membershipType] : null
+  const plan = tier ? (tier.plans[currentMember.membershipPlan] || { label: '', monthly: 0 }) : null
 
   return (
     <div className="dashboard-page">
@@ -71,17 +72,45 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
       </div>
 
       {/* Membership Card */}
-      <div className="membership-banner">
-        <div className="membership-banner-left">
-          <span className="membership-badge">{tier.label}</span>
-          <h3 className="membership-plan">{plan.label} Plan</h3>
-          <p className="membership-rate">${plan.monthly}/month</p>
+      {isMember ? (
+        <div className="membership-banner">
+          <div className="membership-banner-left">
+            <span className="membership-badge">{tier.label}</span>
+            <h3 className="membership-plan">{plan.label} Plan</h3>
+            <p className="membership-rate">${plan.monthly}/month</p>
+          </div>
+          <div className="membership-banner-right">
+            {currentMember.memberSince && (
+              <p className="membership-since">Member since {new Date(currentMember.memberSince + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</p>
+            )}
+            <p className="membership-id">ID: {currentMember.memberId}</p>
+          </div>
         </div>
-        <div className="membership-banner-right">
-          <p className="membership-since">Member since {new Date(currentMember.memberSince + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</p>
-          <p className="membership-id">ID: {currentMember.memberId}</p>
+      ) : (
+        <div className="membership-banner" style={{ background: 'linear-gradient(135deg, var(--accent-dark), var(--accent))' }}>
+          <div className="membership-banner-left">
+            <span className="membership-badge" style={{ background: 'rgba(255,255,255,0.2)' }}>{currentMember.contactType || 'Guest'}</span>
+            <h3 className="membership-plan" style={{ margin: '0.5rem 0 0.25rem' }}>Become a Member</h3>
+            <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.85rem', margin: 0 }}>
+              Join our community with a monthly membership and support the synagogue.
+            </p>
+          </div>
+          <div className="membership-banner-right" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
+            <div style={{ fontSize: '0.82rem', color: 'rgba(255,255,255,0.85)', textAlign: 'right' }}>
+              <p style={{ margin: '0 0 2px' }}>Single: $100/mo</p>
+              <p style={{ margin: '0 0 2px' }}>Couple: $150/mo</p>
+              <p style={{ margin: 0 }}>Family: $180/mo</p>
+            </div>
+            <button
+              className="pay-btn"
+              style={{ background: '#fff', color: 'var(--accent-dark)', padding: '8px 20px', fontSize: '0.85rem', fontWeight: 600 }}
+              onClick={() => navigate('/pay?join=true')}
+            >
+              Join Now
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Summary Cards */}
       <div className="summary-cards">

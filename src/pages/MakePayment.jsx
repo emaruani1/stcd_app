@@ -1,7 +1,17 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import * as api from '../api'
 
+const MEMBERSHIP_PLANS = [
+  { id: 'single', label: 'Single', price: 100 },
+  { id: 'couple', label: 'Couple', price: 150 },
+  { id: 'family', label: 'Family', price: 180 },
+]
+
 export default function MakePayment({ currentMember, pledgePayments, setPledgePayments, extraPayments, setExtraPayments, currentBalance, setMemberBalances, currentMemberId, refreshData }) {
+  const [searchParams] = useSearchParams()
+  const showJoin = searchParams.get('join') === 'true'
+
   const [selectedPledges, setSelectedPledges] = useState([])
   const [paymentAmounts, setPaymentAmounts] = useState({})
   const [donationAmount, setDonationAmount] = useState('')
@@ -332,6 +342,16 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
 
       {paySuccess && (
         <div className="success-toast">{successMessage}</div>
+      )}
+
+      {/* Membership Join Section */}
+      {(showJoin || (!currentMember.membershipType && !currentMember.membershipPlan)) && (
+        <MembershipJoinSection
+          currentMemberId={currentMemberId}
+          refreshData={refreshData}
+          setPaySuccess={setPaySuccess}
+          setSuccessMessage={setSuccessMessage}
+        />
       )}
 
       <div className="dashboard-section">
@@ -674,6 +694,74 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function MembershipJoinSection({ currentMemberId, refreshData, setPaySuccess, setSuccessMessage }) {
+  const [selectedPlan, setSelectedPlan] = useState(null)
+  const [processing, setProcessing] = useState(false)
+
+  const handleJoin = async () => {
+    if (!selectedPlan) return
+    setProcessing(true)
+    try {
+      await api.createTransaction({
+        memberId: String(currentMemberId),
+        date: new Date().toISOString().split('T')[0],
+        description: `Membership - ${selectedPlan.label} Plan`,
+        amount: selectedPlan.price,
+        method: 'Credit Card',
+        paymentType: 'donation',
+        category: 'Membership',
+      })
+      setSuccessMessage(`Welcome! Your ${selectedPlan.label} membership ($${selectedPlan.price}/mo) has been submitted.`)
+      setPaySuccess(true)
+      setTimeout(() => setPaySuccess(false), 5000)
+      if (refreshData) refreshData()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  return (
+    <div className="dashboard-section" style={{ background: 'linear-gradient(135deg, rgba(198,151,63,0.08), rgba(198,151,63,0.02))', border: '2px solid var(--accent)', borderRadius: 'var(--radius-lg)' }}>
+      <h2 className="section-title" style={{ color: 'var(--accent-dark)' }}>Become a Member</h2>
+      <p style={{ color: 'var(--text-light)', marginBottom: '1rem' }}>
+        Support the Sephardic Torah Center of Dallas with a monthly membership. Choose a plan that fits your household:
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+        {MEMBERSHIP_PLANS.map(plan => (
+          <div
+            key={plan.id}
+            onClick={() => setSelectedPlan(plan)}
+            style={{
+              padding: '1.25rem',
+              borderRadius: 'var(--radius-md)',
+              border: selectedPlan?.id === plan.id ? '2px solid var(--accent)' : '2px solid var(--border)',
+              background: selectedPlan?.id === plan.id ? 'rgba(198,151,63,0.08)' : 'var(--bg-card)',
+              cursor: 'pointer',
+              textAlign: 'center',
+              transition: 'all 0.2s',
+            }}
+          >
+            <h3 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem' }}>{plan.label}</h3>
+            <p style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: 'var(--accent-dark)' }}>
+              ${plan.price}<span style={{ fontSize: '0.85rem', fontWeight: 400, color: 'var(--text-muted)' }}>/mo</span>
+            </p>
+          </div>
+        ))}
+      </div>
+      <button
+        className="pay-btn"
+        style={{ padding: '12px 32px', fontSize: '0.95rem' }}
+        onClick={handleJoin}
+        disabled={!selectedPlan || processing}
+      >
+        {processing ? 'Processing...' : selectedPlan ? `Join as ${selectedPlan.label} - $${selectedPlan.price}/mo` : 'Select a Plan'}
+      </button>
     </div>
   )
 }
