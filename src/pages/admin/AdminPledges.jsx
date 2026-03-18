@@ -42,6 +42,7 @@ export default function AdminPledges({
     description: '',
     date: new Date().toISOString().split('T')[0],
     productId: '',
+    applyToCredit: false,
   })
 
   const showToast = (msg) => {
@@ -200,12 +201,19 @@ export default function AdminPledges({
         method: newTxn.method,
         paymentType: newTxn.paymentType,
       })
+
+      if (newTxn.applyToCredit) {
+        const member = allMembers.find(m => String(m.id) === String(newTxn.memberId))
+        const currentBal = member ? Number(member.balance) || 0 : 0
+        await api.updateMember(String(newTxn.memberId), { balance: currentBal + amount })
+      }
+
       setShowCreateTxnModal(false)
       setNewTxn({
         memberId: '', paymentType: 'donation', amount: '', method: paymentMethods[0]?.label || 'Cash',
-        description: '', date: new Date().toISOString().split('T')[0], productId: '',
+        description: '', date: new Date().toISOString().split('T')[0], productId: '', applyToCredit: false,
       })
-      showToast('Transaction created')
+      showToast(newTxn.applyToCredit ? 'Transaction created & credit applied' : 'Transaction created')
       if (refreshData) refreshData()
     } catch (err) {
       showToast('Error: ' + err.message)
@@ -538,6 +546,12 @@ export default function AdminPledges({
                     <option key={m.id} value={m.label}>{m.label}</option>
                   ))}
                 </select>
+              </div>
+              <div className="form-group">
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={newTxn.applyToCredit} onChange={e => setNewTxn(prev => ({ ...prev, applyToCredit: e.target.checked }))} />
+                  Apply amount to member's available credit
+                </label>
               </div>
               <button
                 className="pay-btn modal-pay-btn"

@@ -198,20 +198,20 @@ export default function AdminMerge({
                     <h4>Primary: {primaryMember.firstName} {primaryMember.lastName}</h4>
                     <p>{primaryMember.pledges.length} pledges, {primaryMember.paymentHistory.length} payments</p>
                     <p>{primaryMember.yahrzeits.length} yahrzeits, {primaryMember.children.length} children</p>
-                    <p>Balance: ${(memberBalances[primaryMember.id] || 0).toLocaleString()}</p>
+                    <p>Credit: ${(memberBalances[primaryMember.id] || 0).toLocaleString()}</p>
                     <p>Aliases: {(primaryMember.aliases || []).join(', ') || 'None'}</p>
                   </div>
                   <div>
                     <h4>Secondary: {secondaryMember.firstName} {secondaryMember.lastName}</h4>
                     <p>{secondaryMember.pledges.length} pledges, {secondaryMember.paymentHistory.length} payments</p>
                     <p>{secondaryMember.yahrzeits.length} yahrzeits, {secondaryMember.children.length} children</p>
-                    <p>Balance: ${(memberBalances[secondaryMember.id] || 0).toLocaleString()}</p>
+                    <p>Credit: ${(memberBalances[secondaryMember.id] || 0).toLocaleString()}</p>
                     <p>Aliases: {(secondaryMember.aliases || []).join(', ') || 'None'}</p>
                   </div>
                 </div>
                 <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#fff3cd', borderRadius: 'var(--radius-md)', border: '1px solid #ffc107' }}>
                   <strong>After merge:</strong> All pledges, payments, yahrzeits, children, and aliases will be combined.
-                  The secondary account's name will become an alias. Balances will be summed.
+                  The secondary account's name will become an alias. Credits will be summed.
                   The secondary account will be permanently removed.
                 </div>
                 <button

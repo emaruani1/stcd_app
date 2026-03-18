@@ -105,7 +105,7 @@ export default function AdminDashboard({ allMembers, memberBalances }) {
         <div className="summary-card">
           <div className="summary-card-icon admin-wallet-icon">&#128179;</div>
           <div className="summary-card-info">
-            <p className="summary-card-label">Total Member Balances</p>
+            <p className="summary-card-label">Total Member Credits</p>
             <p className="summary-card-value" style={{ color: 'var(--success)' }}>${totalMemberBalances.toLocaleString()}</p>
           </div>
         </div>
