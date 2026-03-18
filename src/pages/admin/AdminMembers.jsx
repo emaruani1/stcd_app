@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { membershipTiers } from '../../data/fakeData'
 import * as api from '../../api'
 
-export default function AdminMembers({ allMembers, setAllMembers, memberBalances, adminTransactions, refreshData }) {
+export default function AdminMembers({ allMembers, setAllMembers, memberBalances, adminTransactions, refreshData, onImpersonate }) {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
@@ -330,6 +330,15 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
                               >
                                 Merge Account
                               </button>
+                              {onImpersonate && (
+                                <button
+                                  className="action-btn"
+                                  style={{ background: 'var(--primary)', color: '#fff', border: 'none' }}
+                                  onClick={(e) => { e.stopPropagation(); onImpersonate(String(m.id)) }}
+                                >
+                                  View as Member
+                                </button>
+                              )}
                             </div>
 
                             <h4>Pledges</h4>

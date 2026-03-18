@@ -54,6 +54,9 @@ function App() {
   const [profileData, setProfileData] = useState(null)
   const [memberBalances, setMemberBalances] = useState({})
 
+  // Admin impersonation
+  const [impersonateId, setImpersonateId] = useState(null)
+
   // Session-only payment tracking (for member self-service payments before they hit the API)
   const [pledgePayments, setPledgePayments] = useState({})
   const [extraPayments, setExtraPayments] = useState([])
@@ -223,9 +226,10 @@ function App() {
     )
   }
 
-  const userRole = session.role
-  const currentMemberId = session.memberId
-  const currentMember = allMembers.find(m => m.id === currentMemberId) || allMembers[0]
+  const isImpersonating = session.role === 'admin' && impersonateId
+  const userRole = isImpersonating ? 'member' : session.role
+  const currentMemberId = isImpersonating ? impersonateId : session.memberId
+  const currentMember = allMembers.find(m => String(m.id) === String(currentMemberId)) || allMembers[0]
   const currentBalance = memberBalances[currentMemberId] || 0
 
   // Wrappers that persist changes to API then refresh
@@ -354,6 +358,7 @@ function App() {
                 memberBalances={memberBalances}
                 adminTransactions={adminTransactions}
                 refreshData={refreshData}
+                onImpersonate={setImpersonateId}
               />
             }
           />
@@ -496,6 +501,38 @@ function App() {
 
   return (
     <Layout onLogout={handleLogout} userRole={userRole} currentMember={currentMember}>
+      {isImpersonating && (
+        <div style={{
+          background: 'linear-gradient(135deg, var(--primary-dark), var(--primary))',
+          color: '#fff',
+          padding: '10px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          fontSize: '0.9rem',
+          borderRadius: 'var(--radius-md)',
+          margin: '0 0 1rem',
+        }}>
+          <span>
+            Viewing as <strong>{currentMember?.firstName} {currentMember?.lastName}</strong> (ID: {currentMemberId})
+          </span>
+          <button
+            onClick={() => setImpersonateId(null)}
+            style={{
+              background: 'rgba(255,255,255,0.2)',
+              color: '#fff',
+              border: '1px solid rgba(255,255,255,0.4)',
+              padding: '6px 16px',
+              borderRadius: '50px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '0.82rem',
+            }}
+          >
+            Back to Admin
+          </button>
+        </div>
+      )}
       <Routes>
         <Route
           path="/"
