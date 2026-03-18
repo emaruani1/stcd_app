@@ -24,12 +24,13 @@ export default function AdminMemberEdit({ allMembers, refreshData }) {
   const member = allMembers.find(m => String(m.id) === String(memberId))
 
   const [form, setForm] = useState(null)
+  const [originalForm, setOriginalForm] = useState(null)
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     if (member) {
-      setForm({
+      const initial = {
         firstName: member.firstName || '',
         lastName: member.lastName || '',
         gender: member.gender || '',
@@ -59,7 +60,9 @@ export default function AdminMemberEdit({ allMembers, refreshData }) {
         dearWho: member.dearWho || '',
         yahrzeits: (member.yahrzeits || []).map(y => ({ ...y, useHebrew: false })),
         children: (member.children || []).map(c => ({ ...c, useHebrew: false })),
-      })
+      }
+      setForm(initial)
+      setOriginalForm(JSON.parse(JSON.stringify(initial)))
     }
   }, [member])
 
@@ -94,36 +97,47 @@ export default function AdminMemberEdit({ allMembers, refreshData }) {
   const handleSave = async () => {
     setSaving(true)
     try {
-      // Clean yahrzeits/children for storage (remove UI-only fields)
-      const yahrzeits = form.yahrzeits.map(({ useHebrew, ...y }) => y)
-      const children = form.children.map(({ useHebrew, ...c }) => c)
+      // Build a diff: only send fields that actually changed
+      const uiOnlyKeys = ['dobIsHebrew', 'dobHebrew', 'spouseDobIsHebrew', 'spouseDobHebrew', 'marriageDateIsHebrew', 'marriageDateHebrew']
+      const changes = {}
 
-      await api.updateMember(String(memberId), {
-        firstName: form.firstName,
-        lastName: form.lastName,
-        gender: form.gender,
-        email: form.email,
-        phone: form.phone,
-        dob: form.dob,
-        address: form.address,
-        addressLine2: form.addressLine2,
-        city: form.city,
-        state: form.state,
-        zip: form.zip,
-        spouseName: form.spouseName,
-        spouseGender: form.spouseGender,
-        spouseDob: form.spouseDob,
-        marriageDate: form.marriageDate,
-        contactType: form.contactType,
-        membershipType: form.membershipType,
-        membershipPlan: form.membershipPlan,
-        memberSince: form.memberSince,
-        formalSalutation: form.formalSalutation,
-        dearWho: form.dearWho,
-        yahrzeits,
-        children,
-      })
+      // Compare simple fields
+      const simpleFields = [
+        'firstName', 'lastName', 'gender', 'email', 'phone', 'dob',
+        'address', 'addressLine2', 'city', 'state', 'zip',
+        'spouseName', 'spouseGender', 'spouseDob', 'marriageDate',
+        'contactType', 'membershipType', 'membershipPlan', 'memberSince',
+        'formalSalutation', 'dearWho',
+      ]
+      for (const key of simpleFields) {
+        if (form[key] !== originalForm[key]) {
+          changes[key] = form[key]
+        }
+      }
+
+      // Always send yahrzeits/children if they changed (compare by JSON)
+      const yahrzeits = form.yahrzeits.map(({ useHebrew, ...y }) => y)
+      const origYahrzeits = originalForm.yahrzeits.map(({ useHebrew, ...y }) => y)
+      if (JSON.stringify(yahrzeits) !== JSON.stringify(origYahrzeits)) {
+        changes.yahrzeits = yahrzeits
+      }
+
+      const children = form.children.map(({ useHebrew, ...c }) => c)
+      const origChildren = originalForm.children.map(({ useHebrew, ...c }) => c)
+      if (JSON.stringify(children) !== JSON.stringify(origChildren)) {
+        changes.children = children
+      }
+
+      if (Object.keys(changes).length === 0) {
+        setToast('No changes to save')
+        setTimeout(() => setToast(''), 2000)
+        setSaving(false)
+        return
+      }
+
+      await api.updateMember(String(memberId), changes)
       setToast('Profile saved successfully!')
+      setOriginalForm(JSON.parse(JSON.stringify(form)))
       setTimeout(() => setToast(''), 3000)
       if (refreshData) refreshData()
     } catch (err) {

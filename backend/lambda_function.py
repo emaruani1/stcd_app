@@ -189,12 +189,28 @@ def create_member(body):
 
 
 def update_member(member_id, body):
+    # First fetch existing member to avoid overwriting with empty values
+    existing = members_table.get_item(Key={'memberId': member_id}).get('Item', {})
+
     expr_parts = []
     expr_values = {}
     expr_names = {}
     for key, value in body.items():
         if key == 'memberId':
             continue
+
+        # Skip empty strings/None if the existing field has a real value
+        # (only overwrite if the new value is non-empty, or if explicitly clearing with a special marker)
+        existing_val = existing.get(key)
+        if value == '' and existing_val and existing_val != '':
+            continue  # Don't overwrite existing data with empty string
+        if value is None:
+            continue  # Never overwrite with None
+
+        # For lists: don't overwrite non-empty lists with empty lists
+        if isinstance(value, list) and len(value) == 0 and isinstance(existing_val, list) and len(existing_val) > 0:
+            continue
+
         safe_key = f"#{key}"
         expr_names[safe_key] = key
         expr_parts.append(f"{safe_key} = :{key}")
@@ -338,6 +354,8 @@ def update_transaction(body):
     member_id = body['memberId']
     txn_id = body['transactionId']
 
+    existing = transactions_table.get_item(Key={'memberId': member_id, 'transactionId': txn_id}).get('Item', {})
+
     update_fields = {k: v for k, v in body.items() if k not in ('memberId', 'transactionId')}
     if 'amount' in update_fields:
         update_fields['amount'] = Decimal(str(update_fields['amount']))
@@ -349,6 +367,11 @@ def update_transaction(body):
     expr_values = {}
     expr_names = {}
     for key, value in update_fields.items():
+        # Skip empty values that would overwrite existing data
+        if value == '' and existing.get(key, '') != '':
+            continue
+        if value is None:
+            continue
         safe_key = f"#{key}"
         expr_names[safe_key] = key
         expr_parts.append(f"{safe_key} = :{key}")
@@ -421,6 +444,8 @@ def update_pledge(body):
     member_id = body['memberId']
     pledge_id = body['pledgeId']
 
+    existing = pledges_table.get_item(Key={'memberId': member_id, 'pledgeId': pledge_id}).get('Item', {})
+
     update_fields = {k: v for k, v in body.items() if k not in ('memberId', 'pledgeId')}
     if 'amount' in update_fields:
         update_fields['amount'] = Decimal(str(update_fields['amount']))
@@ -431,6 +456,11 @@ def update_pledge(body):
     expr_values = {}
     expr_names = {}
     for key, value in update_fields.items():
+        # Skip empty values that would overwrite existing data
+        if value == '' and existing.get(key, '') != '':
+            continue
+        if value is None:
+            continue
         safe_key = f"#{key}"
         expr_names[safe_key] = key
         expr_parts.append(f"{safe_key} = :{key}")
