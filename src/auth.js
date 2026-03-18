@@ -4,8 +4,8 @@ import {
   AuthenticationDetails,
 } from 'amazon-cognito-identity-js'
 
-const POOL_ID = 'us-east-2_Pna4Sv1p8'
-const CLIENT_ID = '7hvnos43j267cl5v1m2knojeda'
+const POOL_ID = import.meta.env.VITE_COGNITO_POOL_ID
+const CLIENT_ID = import.meta.env.VITE_COGNITO_CLIENT_ID
 
 const userPool = new CognitoUserPool({
   UserPoolId: POOL_ID,

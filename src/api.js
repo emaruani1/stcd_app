@@ -1,4 +1,4 @@
-const API_BASE = 'https://uvv584f1gb.execute-api.us-east-2.amazonaws.com/prod'
+const API_BASE = import.meta.env.VITE_API_URL
 
 async function request(path, options = {}) {
   const url = `${API_BASE}${path}`
