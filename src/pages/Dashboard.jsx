@@ -1,24 +1,53 @@
-import { pledges, paymentHistory, currentUser, membershipTiers } from '../data/fakeData'
+import { membershipTiers } from '../data/fakeData'
 import { useNavigate } from 'react-router-dom'
 
-export default function Dashboard({ paidPledges, extraPayments }) {
+export default function Dashboard({ currentMember, pledgePayments, extraPayments, currentBalance }) {
   const navigate = useNavigate()
 
-  const allPledges = pledges.map(p => ({
+  const memberPledges = currentMember.pledges
+  const memberPaymentHistory = currentMember.paymentHistory
+
+  const getRemainingBalance = (p) => {
+    const sessionPaid = pledgePayments[p.id] || 0
+    return p.amount - p.paidAmount - sessionPaid
+  }
+
+  const allPledges = memberPledges.map(p => ({
     ...p,
-    paid: p.paid || paidPledges.includes(p.id),
+    remaining: getRemainingBalance(p),
+    fullyPaid: getRemainingBalance(p) <= 0,
   }))
 
-  const unpaidPledges = allPledges.filter(p => !p.paid)
-  const paidPledgesList = allPledges.filter(p => p.paid)
-  const totalOwed = unpaidPledges.reduce((sum, p) => sum + p.amount, 0)
-  const totalPaid = paidPledgesList.reduce((sum, p) => sum + p.amount, 0)
-    + paymentHistory.reduce((sum, p) => sum + p.amount, 0)
-    + extraPayments.reduce((sum, p) => sum + p.amount, 0)
+  const unpaidPledges = allPledges.filter(p => !p.fullyPaid && !p.canceled)
+  const totalOwed = unpaidPledges.reduce((sum, p) => sum + p.remaining, 0)
+
+  const totalStaticPaid = memberPledges.reduce((sum, p) => sum + p.paidAmount, 0)
+  const totalSessionPledgePaid = Object.values(pledgePayments).reduce((sum, v) => sum + v, 0)
+  const totalHistoryPaid = memberPaymentHistory.reduce((sum, p) => sum + p.amount, 0)
+  const totalExtraPaid = extraPayments.reduce((sum, p) => sum + p.amount, 0)
+  const totalPaid = totalStaticPaid + totalSessionPledgePaid + totalHistoryPaid + totalExtraPaid
 
   const formatDate = (dateStr) => {
     const d = new Date(dateStr + 'T00:00:00')
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  }
+
+  const paymentTypeBadge = (type) => {
+    const cls = {
+      membership: 'badge-membership',
+      pledge: 'badge-pledge',
+      donation: 'badge-donation',
+      purchase: 'badge-purchase',
+    }[type] || 'badge-pending'
+    return <span className={`badge ${cls}`} style={{ fontSize: '0.72rem' }}>{type ? type.charAt(0).toUpperCase() + type.slice(1) : '—'}</span>
+  }
+
+  const categoryBadge = (cat) => {
+    const cls = {
+      membership: 'badge-membership',
+      pledge: 'badge-pledge',
+    }[cat] || 'badge-pending'
+    return <span className={`badge ${cls}`} style={{ fontSize: '0.72rem' }}>{cat ? cat.charAt(0).toUpperCase() + cat.slice(1) : '—'}</span>
   }
 
   const today = new Date()
@@ -31,14 +60,14 @@ export default function Dashboard({ paidPledges, extraPayments }) {
     .filter(p => new Date(p.date + 'T00:00:00') < today)
     .sort((a, b) => new Date(a.date) - new Date(b.date))
 
-  const tier = membershipTiers[currentUser.membershipType]
-  const plan = tier.plans[currentUser.membershipPlan]
+  const tier = membershipTiers[currentMember.membershipType] || { label: currentMember.contactType || 'Contact', plans: {} }
+  const plan = tier.plans[currentMember.membershipPlan] || { label: '', monthly: 0 }
 
   return (
     <div className="dashboard-page">
       <div className="page-title-row">
         <div>
-          <h1 className="page-title">Welcome back, {currentUser.firstName}</h1>
+          <h1 className="page-title">Welcome back, {currentMember.firstName}</h1>
           <p className="page-subtitle">Here's an overview of your account</p>
         </div>
       </div>
@@ -51,8 +80,8 @@ export default function Dashboard({ paidPledges, extraPayments }) {
           <p className="membership-rate">${plan.monthly}/month</p>
         </div>
         <div className="membership-banner-right">
-          <p className="membership-since">Member since {new Date(currentUser.memberSince + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</p>
-          <p className="membership-id">ID: {currentUser.memberId}</p>
+          <p className="membership-since">Member since {new Date(currentMember.memberSince + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</p>
+          <p className="membership-id">ID: {currentMember.memberId}</p>
         </div>
       </div>
 
@@ -80,10 +109,10 @@ export default function Dashboard({ paidPledges, extraPayments }) {
           </div>
         </div>
         <div className="summary-card clickable" onClick={() => navigate('/pay')}>
-          <div className="summary-card-icon action-icon">&#8594;</div>
+          <div className={`summary-card-icon ${currentBalance > 0 ? 'wallet-icon' : 'wallet-icon empty'}`}>&#128179;</div>
           <div className="summary-card-info">
-            <p className="summary-card-label">Quick Action</p>
-            <p className="summary-card-value action-value">Make a Payment</p>
+            <p className="summary-card-label">Account Balance</p>
+            <p className={`summary-card-value ${currentBalance > 0 ? 'wallet-value' : 'wallet-value empty'}`}>${currentBalance.toLocaleString()}</p>
           </div>
         </div>
       </div>
@@ -97,6 +126,7 @@ export default function Dashboard({ paidPledges, extraPayments }) {
               <thead>
                 <tr>
                   <th>Description</th>
+                  <th>Category</th>
                   <th>Date</th>
                   <th>Amount</th>
                   <th>Status</th>
@@ -106,8 +136,14 @@ export default function Dashboard({ paidPledges, extraPayments }) {
                 {overduePledges.map(p => (
                   <tr key={p.id} className="overdue-row">
                     <td>{p.description}</td>
+                    <td>{categoryBadge(p.category)}</td>
                     <td>{formatDate(p.date)}</td>
-                    <td className="amount-cell">${p.amount.toLocaleString()}</td>
+                    <td className="amount-cell">
+                      ${p.amount.toLocaleString()}
+                      {p.remaining < p.amount && (
+                        <span className="remaining-badge">${p.remaining.toLocaleString()} remaining</span>
+                      )}
+                    </td>
                     <td><span className="badge badge-overdue">Overdue</span></td>
                   </tr>
                 ))}
@@ -125,6 +161,7 @@ export default function Dashboard({ paidPledges, extraPayments }) {
             <thead>
               <tr>
                 <th>Description</th>
+                <th>Category</th>
                 <th>Date</th>
                 <th>Amount</th>
                 <th>Status</th>
@@ -132,13 +169,19 @@ export default function Dashboard({ paidPledges, extraPayments }) {
             </thead>
             <tbody>
               {upcomingPledges.length === 0 ? (
-                <tr><td colSpan="4" className="empty-row">No upcoming pledges</td></tr>
+                <tr><td colSpan="5" className="empty-row">No upcoming pledges</td></tr>
               ) : (
                 upcomingPledges.map(p => (
                   <tr key={p.id}>
                     <td>{p.description}</td>
+                    <td>{categoryBadge(p.category)}</td>
                     <td>{formatDate(p.date)}</td>
-                    <td className="amount-cell">${p.amount.toLocaleString()}</td>
+                    <td className="amount-cell">
+                      ${p.amount.toLocaleString()}
+                      {p.remaining < p.amount && (
+                        <span className="remaining-badge">${p.remaining.toLocaleString()} remaining</span>
+                      )}
+                    </td>
                     <td><span className="badge badge-pending">Pending</span></td>
                   </tr>
                 ))
@@ -161,15 +204,20 @@ export default function Dashboard({ paidPledges, extraPayments }) {
             <thead>
               <tr>
                 <th>Description</th>
+                <th>Type</th>
                 <th>Date</th>
                 <th>Amount</th>
                 <th>Method</th>
               </tr>
             </thead>
             <tbody>
-              {paymentHistory.slice(0, 5).map(p => (
-                <tr key={p.id}>
+              {[...memberPaymentHistory, ...extraPayments]
+                .sort((a, b) => new Date(b.date) - new Date(a.date))
+                .slice(0, 5)
+                .map((p, idx) => (
+                <tr key={p.id || idx}>
                   <td>{p.description}</td>
+                  <td>{paymentTypeBadge(p.paymentType)}</td>
                   <td>{formatDate(p.date)}</td>
                   <td className="amount-cell">${p.amount.toLocaleString()}</td>
                   <td>{p.method}</td>
@@ -178,9 +226,14 @@ export default function Dashboard({ paidPledges, extraPayments }) {
             </tbody>
           </table>
         </div>
-        <button className="view-all-btn" onClick={() => navigate('/history')}>
-          View Full History
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem' }}>
+          <button className="view-all-btn" onClick={() => navigate('/history')}>
+            View Full History
+          </button>
+          <button className="view-all-btn" onClick={() => navigate('/statements')} style={{ background: 'var(--bg-warm)' }}>
+            View Statement
+          </button>
+        </div>
       </div>
     </div>
   )

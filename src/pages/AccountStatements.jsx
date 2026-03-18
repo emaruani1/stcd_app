@@ -1,0 +1,330 @@
+import { useState, useMemo } from 'react'
+import { useParams } from 'react-router-dom'
+
+export default function AccountStatements({
+  allMembers,
+  adminTransactions,
+  getTransactionsForMember,
+  isAdmin,
+  currentMemberId,
+}) {
+  const params = useParams()
+  const memberId = isAdmin ? Number(params.memberId) : currentMemberId
+
+  const member = allMembers.find(m => m.id === memberId)
+
+  const today = new Date()
+  const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
+  const todayStr = today.toISOString().split('T')[0]
+
+  const [startDate, setStartDate] = useState(startOfMonth)
+  const [endDate, setEndDate] = useState(todayStr)
+  const [typeFilters, setTypeFilters] = useState(['membership', 'pledge', 'donation', 'purchase'])
+  const [preset, setPreset] = useState('mtd')
+
+  const allTransactions = useMemo(() => {
+    if (!memberId) return []
+    return getTransactionsForMember(memberId)
+  }, [memberId, allMembers, adminTransactions])
+
+  const applyPreset = (key) => {
+    setPreset(key)
+    const now = new Date()
+    if (key === 'mtd') {
+      setStartDate(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0])
+      setEndDate(now.toISOString().split('T')[0])
+      setTypeFilters(['membership', 'pledge', 'donation', 'purchase'])
+    } else if (key === 'ytd') {
+      setStartDate(new Date(now.getFullYear(), 0, 1).toISOString().split('T')[0])
+      setEndDate(now.toISOString().split('T')[0])
+      setTypeFilters(['membership', 'pledge', 'donation', 'purchase'])
+    } else if (key === 'eoy') {
+      const year = now.getFullYear() - 1
+      setStartDate(`${year}-01-01`)
+      setEndDate(`${year}-12-31`)
+      setTypeFilters(['donation'])
+    } else if (key === 'payments') {
+      setStartDate('')
+      setEndDate('')
+      setTypeFilters(['membership', 'pledge', 'donation', 'purchase'])
+    }
+  }
+
+  const toggleType = (type) => {
+    setTypeFilters(prev =>
+      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+    )
+    setPreset('custom')
+  }
+
+  const filtered = useMemo(() => {
+    return allTransactions.filter(t => {
+      if (typeFilters.length && !typeFilters.includes(t.paymentType)) return false
+      if (startDate) {
+        const td = new Date(t.date + 'T00:00:00')
+        if (td < new Date(startDate + 'T00:00:00')) return false
+      }
+      if (endDate) {
+        const td = new Date(t.date + 'T00:00:00')
+        if (td > new Date(endDate + 'T23:59:59')) return false
+      }
+      return true
+    })
+  }, [allTransactions, typeFilters, startDate, endDate])
+
+  const totals = useMemo(() => {
+    const t = { membership: 0, pledge: 0, donation: 0, purchase: 0, total: 0 }
+    filtered.forEach(txn => {
+      t[txn.paymentType] = (t[txn.paymentType] || 0) + txn.amount
+      t.total += txn.amount
+    })
+    return t
+  }, [filtered])
+
+  // Pledge summary: total pledged vs paid
+  const pledgeSummary = useMemo(() => {
+    if (!member) return { totalPledged: 0, totalPaid: 0 }
+    const pledges = member.pledges.filter(p => p.category === 'pledge' && !p.canceled)
+    return {
+      totalPledged: pledges.reduce((s, p) => s + p.amount, 0),
+      totalPaid: pledges.reduce((s, p) => s + p.paidAmount, 0),
+    }
+  }, [member])
+
+  const formatDate = (dateStr) => {
+    const d = new Date(dateStr + 'T00:00:00')
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  }
+
+  const paymentTypeBadge = (type) => {
+    const cls = {
+      membership: 'badge-membership',
+      pledge: 'badge-pledge',
+      donation: 'badge-donation',
+      purchase: 'badge-purchase',
+    }[type] || 'badge-pending'
+    return <span className={`badge ${cls}`}>{type ? type.charAt(0).toUpperCase() + type.slice(1) : '—'}</span>
+  }
+
+  const downloadCSV = () => {
+    const headers = ['Date', 'Description', 'Type', 'Amount', 'Method']
+    const rows = filtered.map(t => [
+      t.date,
+      `"${t.description}"`,
+      t.paymentType || '',
+      t.amount.toFixed(2),
+      t.method || '',
+    ])
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `statement_${member?.firstName || 'member'}_${startDate}_${endDate}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const downloadPDF = () => {
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) return
+    const memberName = member ? `${member.firstName} ${member.lastName}` : 'Member'
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Account Statement - ${memberName}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; color: #333; }
+          h1 { font-size: 18px; margin-bottom: 4px; }
+          h2 { font-size: 14px; color: #666; margin-top: 0; }
+          .summary { display: flex; gap: 20px; margin: 16px 0; }
+          .summary-item { background: #f5f5f5; padding: 10px 16px; border-radius: 6px; }
+          .summary-item strong { display: block; font-size: 18px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+          th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #ddd; font-size: 12px; }
+          th { background: #f5f5f5; font-weight: 600; }
+          .amount { text-align: right; }
+          .total-row { font-weight: bold; background: #f0f0f0; }
+          .footer { margin-top: 24px; font-size: 11px; color: #999; }
+        </style>
+      </head>
+      <body>
+        <h1>Sephardic Torah Center of Dallas</h1>
+        <h2>Account Statement - ${memberName}</h2>
+        <p>Period: ${startDate ? formatDate(startDate) : 'All time'} - ${endDate ? formatDate(endDate) : 'Present'}</p>
+        <div class="summary">
+          <div class="summary-item">Total: <strong>$${totals.total.toLocaleString()}</strong></div>
+          <div class="summary-item">Donations: <strong>$${totals.donation.toLocaleString()}</strong></div>
+          <div class="summary-item">Pledges: <strong>$${totals.pledge.toLocaleString()}</strong></div>
+        </div>
+        <table>
+          <thead><tr><th>Date</th><th>Description</th><th>Type</th><th class="amount">Amount</th><th>Method</th></tr></thead>
+          <tbody>
+            ${filtered.map(t => `<tr><td>${formatDate(t.date)}</td><td>${t.description}</td><td>${t.paymentType || ''}</td><td class="amount">$${t.amount.toLocaleString()}</td><td>${t.method || ''}</td></tr>`).join('')}
+            <tr class="total-row"><td colspan="3">Total</td><td class="amount">$${totals.total.toLocaleString()}</td><td></td></tr>
+          </tbody>
+        </table>
+        <div class="footer">Generated on ${new Date().toLocaleDateString()}</div>
+      </body>
+      </html>
+    `
+    printWindow.document.write(html)
+    printWindow.document.close()
+    printWindow.print()
+  }
+
+  if (!member) {
+    return (
+      <div className="dashboard-page">
+        <div className="page-title-row">
+          <h1 className="page-title">Account Statements</h1>
+        </div>
+        <div className="dashboard-section" style={{ textAlign: 'center', padding: '3rem' }}>
+          <p>No member selected.</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="dashboard-page">
+      <div className="page-title-row">
+        <div>
+          <h1 className="page-title">Account Statement</h1>
+          <p className="page-subtitle">{member.firstName} {member.lastName} ({member.memberId})</p>
+        </div>
+      </div>
+
+      {/* Presets */}
+      <div className="filter-bar">
+        <div className="filter-tabs">
+          {[
+            { key: 'mtd', label: 'Month to Date' },
+            { key: 'ytd', label: 'Year to Date' },
+            { key: 'eoy', label: 'End of Year Report' },
+            { key: 'payments', label: 'All Payments' },
+            { key: 'custom', label: 'Custom' },
+          ].map(p => (
+            <button
+              key={p.key}
+              className={`filter-tab ${preset === p.key ? 'active' : ''}`}
+              onClick={() => applyPreset(p.key)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Date range + type filters */}
+      <div className="dashboard-section" style={{ padding: '1rem' }}>
+        <div className="form-row" style={{ marginBottom: '1rem' }}>
+          <div className="form-group">
+            <label>From</label>
+            <input type="date" value={startDate} onChange={e => { setStartDate(e.target.value); setPreset('custom') }} />
+          </div>
+          <div className="form-group">
+            <label>To</label>
+            <input type="date" value={endDate} onChange={e => { setEndDate(e.target.value); setPreset('custom') }} />
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Show:</span>
+          {['membership', 'pledge', 'donation', 'purchase'].map(type => (
+            <label key={type} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={typeFilters.includes(type)}
+                onChange={() => toggleType(type)}
+              />
+              {type.charAt(0).toUpperCase() + type.slice(1)}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="summary-cards" style={{ marginBottom: '1.5rem' }}>
+        <div className="summary-card">
+          <div className="summary-card-icon paid-icon">$</div>
+          <div className="summary-card-info">
+            <p className="summary-card-label">Total</p>
+            <p className="summary-card-value">${totals.total.toLocaleString()}</p>
+          </div>
+        </div>
+        <div className="summary-card">
+          <div className="summary-card-icon" style={{ background: '#c6973f22', color: 'var(--accent)' }}>P</div>
+          <div className="summary-card-info">
+            <p className="summary-card-label">Pledges</p>
+            <p className="summary-card-value">${pledgeSummary.totalPledged.toLocaleString()}</p>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>${pledgeSummary.totalPaid.toLocaleString()} paid</p>
+          </div>
+        </div>
+        <div className="summary-card">
+          <div className="summary-card-icon" style={{ background: '#38a16922', color: 'var(--success)' }}>D</div>
+          <div className="summary-card-info">
+            <p className="summary-card-label">Donations</p>
+            <p className="summary-card-value">${totals.donation.toLocaleString()}</p>
+          </div>
+        </div>
+        <div className="summary-card">
+          <div className="summary-card-icon balance-icon">B</div>
+          <div className="summary-card-info">
+            <p className="summary-card-label">Account Balance</p>
+            <p className="summary-card-value">${(member.balance || 0).toLocaleString()}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Download buttons */}
+      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
+        <button className="pay-btn" style={{ padding: '8px 20px', fontSize: '0.85rem' }} onClick={downloadCSV}>
+          Download CSV
+        </button>
+        <button className="modal-btn-secondary" style={{ padding: '8px 20px' }} onClick={downloadPDF}>
+          Download PDF
+        </button>
+      </div>
+
+      {/* Transactions Table */}
+      <div className="dashboard-section">
+        <div className="pledges-table-wrap">
+          <table className="pledges-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Description</th>
+                <th>Type</th>
+                <th>Amount</th>
+                <th>Method</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 ? (
+                <tr><td colSpan="5" className="empty-row">No transactions found for this period</td></tr>
+              ) : (
+                filtered.map((t, idx) => (
+                  <tr key={t.id || idx}>
+                    <td>{formatDate(t.date)}</td>
+                    <td>{t.description}</td>
+                    <td>{paymentTypeBadge(t.paymentType)}</td>
+                    <td className="amount-cell">${t.amount.toLocaleString()}</td>
+                    <td>{t.method}</td>
+                  </tr>
+                ))
+              )}
+              {filtered.length > 0 && (
+                <tr style={{ fontWeight: 600, background: 'var(--bg-warm)' }}>
+                  <td colSpan="3" style={{ textAlign: 'right' }}>Total</td>
+                  <td className="amount-cell">${totals.total.toLocaleString()}</td>
+                  <td></td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -1,13 +1,17 @@
 import { useState, useMemo } from 'react'
-import { sponsorshipCalendar, kiddushOptions, seudaOptions } from '../data/fakeData'
+import { sponsorshipCalendar } from '../data/fakeData'
+import * as api from '../api'
 
-export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPayments, setExtraPayments }) {
+export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPayments, setExtraPayments, blockedDatesState = [], currentBalance, setMemberBalances, currentMemberId, kiddushPricing, seudaPricing, refreshData }) {
+  const kiddushOptions = kiddushPricing || []
+  const seudaOptions = seudaPricing || []
   const [selectedDate, setSelectedDate] = useState(null)
   const [sponsorType, setSponsorType] = useState(null) // 'kiddush' or 'seuda'
   const [selectedOption, setSelectedOption] = useState(null)
   const [occasion, setOccasion] = useState('')
   const [showPayModal, setShowPayModal] = useState(false)
   const [paySuccess, setPaySuccess] = useState(false)
+  const [paymentSource, setPaymentSource] = useState('card')
   const [calMonth, setCalMonth] = useState(() => {
     const d = new Date()
     return { year: d.getFullYear(), month: d.getMonth() }
@@ -78,11 +82,64 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
   const handleSelectSponsor = (type, option) => {
     setSponsorType(type)
     setSelectedOption(option)
+    setPaymentSource(currentBalance >= option.price && currentBalance > 0 ? 'balance' : 'card')
     setShowPayModal(true)
   }
 
-  const confirmPayment = () => {
+  const sponsorTotal = selectedOption ? selectedOption.price : 0
+  const effectiveSource = (() => {
+    if (paymentSource === 'balance' && currentBalance >= sponsorTotal) return 'balance'
+    if (paymentSource === 'balance' && currentBalance > 0 && currentBalance < sponsorTotal) return 'split'
+    return 'card'
+  })()
+  const balancePortionUsed = effectiveSource === 'balance' ? sponsorTotal : effectiveSource === 'split' ? currentBalance : 0
+  const cardPortion = sponsorTotal - balancePortionUsed
+  const showCardForm = paymentSource === 'card' || (paymentSource === 'balance' && currentBalance < sponsorTotal)
+
+  const getPaymentMethodLabel = () => {
+    if (effectiveSource === 'balance') return 'Account Balance'
+    if (effectiveSource === 'split') return 'Balance + Card'
+    return 'Credit Card'
+  }
+
+  const confirmPayment = async () => {
     const key = `${sponsorType}-${selectedDate.date}`
+    const methodLabel = getPaymentMethodLabel()
+    const now = new Date().toISOString().split('T')[0]
+
+    // Deduct from balance if applicable
+    if (balancePortionUsed > 0) {
+      setMemberBalances(prev => ({
+        ...prev,
+        [currentMemberId]: Math.max(0, (prev[currentMemberId] || 0) - balancePortionUsed)
+      }))
+    }
+
+    // Save sponsorship to API
+    try {
+      await api.updateSponsorship(selectedDate.date, {
+        [sponsorType]: {
+          sponsor: 'You',
+          type: selectedOption.id,
+          occasion: occasion || 'Sponsorship',
+          memberId: String(currentMemberId),
+        }
+      })
+    } catch (e) { console.error(e) }
+
+    // Create donation transaction for the sponsorship
+    try {
+      await api.createTransaction({
+        memberId: String(currentMemberId),
+        date: now,
+        description: `${selectedOption.label} - ${formatDate(selectedDate.date)}`,
+        amount: selectedOption.price,
+        method: methodLabel,
+        paymentType: 'donation',
+        category: sponsorType === 'kiddush' ? 'Kiddush' : 'Seuda Shelishit',
+      })
+    } catch (e) { console.error(e) }
+
     setBookedSponsors(prev => ({
       ...prev,
       [key]: {
@@ -91,18 +148,11 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
         occasion: occasion || 'Sponsorship',
       }
     }))
-    const now = new Date().toISOString().split('T')[0]
-    setExtraPayments(prev => [...prev, {
-      id: Date.now(),
-      date: now,
-      description: `${selectedOption.label} - ${formatDate(selectedDate.date)}`,
-      amount: selectedOption.price,
-      method: 'Credit Card',
-    }])
     setShowPayModal(false)
     setPaySuccess(true)
     setSelectedDate(null)
     setTimeout(() => setPaySuccess(false), 3000)
+    if (refreshData) refreshData()
   }
 
   const formatDate = (dateStr) => {
@@ -172,17 +222,20 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
             {calendarDays.map((day, idx) => {
               const satEntry = day ? getSaturdayEntry(day) : null
               const isSat = isSaturday(day)
+              const dateStr = day ? `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}` : ''
+              const isBlockedDate = blockedDatesState.includes(dateStr)
               const kiddushTaken = satEntry?.kiddush
               const seudaTaken = satEntry?.seuda
               const bothTaken = kiddushTaken && seudaTaken
               const isPast = day && new Date(year, month, day) < new Date(new Date().setHours(0,0,0,0))
+              const isClickable = satEntry && !bothTaken && !isPast && !isBlockedDate
 
               return (
                 <div
                   key={idx}
-                  className={`cal-day ${!day ? 'empty' : ''} ${isSat ? 'saturday' : ''} ${satEntry && !bothTaken && !isPast ? 'available' : ''} ${bothTaken ? 'fully-booked' : ''} ${isPast ? 'past' : ''}`}
+                  className={`cal-day ${!day ? 'empty' : ''} ${isSat ? 'saturday' : ''} ${isClickable ? 'available' : ''} ${bothTaken ? 'fully-booked' : ''} ${isPast ? 'past' : ''} ${isBlockedDate ? 'blocked' : ''}`}
                   onClick={() => {
-                    if (satEntry && !bothTaken && !isPast) handleDateClick(satEntry)
+                    if (isClickable) handleDateClick(satEntry)
                   }}
                 >
                   {day && (
@@ -344,26 +397,70 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
                 {occasion && <><br /><em>{occasion}</em></>}
               </p>
 
-              <div className="modal-payment-form">
-                <div className="form-group">
-                  <label>Card Number</label>
-                  <input type="text" placeholder="4242 4242 4242 4242" maxLength="19" />
+              {currentBalance > 0 && (
+                <div className="payment-method-selector">
+                  <div className="payment-method-selector-title">Payment Method</div>
+                  <div className="payment-method-options">
+                    <div
+                      className={`payment-method-option ${paymentSource === 'balance' ? 'selected' : ''}`}
+                      onClick={() => setPaymentSource('balance')}
+                    >
+                      <div className="payment-method-radio">
+                        <div className="payment-method-radio-dot"></div>
+                      </div>
+                      <div className="payment-method-info">
+                        <div className="payment-method-label">Account Balance</div>
+                        <div className="payment-method-desc">Available: ${currentBalance.toLocaleString()}</div>
+                      </div>
+                      <span className="payment-method-badge">${currentBalance.toLocaleString()}</span>
+                    </div>
+                    <div
+                      className={`payment-method-option ${paymentSource === 'card' ? 'selected' : ''}`}
+                      onClick={() => setPaymentSource('card')}
+                    >
+                      <div className="payment-method-radio">
+                        <div className="payment-method-radio-dot"></div>
+                      </div>
+                      <div className="payment-method-info">
+                        <div className="payment-method-label">Credit Card</div>
+                        <div className="payment-method-desc">Pay with your credit or debit card</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {paymentSource === 'balance' && currentBalance > 0 && currentBalance < sponsorTotal && (
+                    <div className="split-payment-notice">
+                      <span className="split-payment-notice-icon">&#9432;</span>
+                      <span>
+                        Your balance covers ${currentBalance.toLocaleString()}. The remaining ${cardPortion.toLocaleString()} will be charged to your card.
+                      </span>
+                    </div>
+                  )}
                 </div>
-                <div className="form-row">
+              )}
+
+              {showCardForm && (
+                <div className="modal-payment-form">
                   <div className="form-group">
-                    <label>Expiry</label>
-                    <input type="text" placeholder="MM/YY" maxLength="5" />
+                    <label>Card Number</label>
+                    <input type="text" placeholder="4242 4242 4242 4242" maxLength="19" />
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Expiry</label>
+                      <input type="text" placeholder="MM/YY" maxLength="5" />
+                    </div>
+                    <div className="form-group">
+                      <label>CVV</label>
+                      <input type="text" placeholder="123" maxLength="4" />
+                    </div>
                   </div>
                   <div className="form-group">
-                    <label>CVV</label>
-                    <input type="text" placeholder="123" maxLength="4" />
+                    <label>Name on Card</label>
+                    <input type="text" placeholder="David Cohen" />
                   </div>
                 </div>
-                <div className="form-group">
-                  <label>Name on Card</label>
-                  <input type="text" placeholder="David Cohen" />
-                </div>
-              </div>
+              )}
 
               <button className="pay-btn modal-pay-btn" onClick={confirmPayment}>
                 Confirm &amp; Pay ${selectedOption.price}

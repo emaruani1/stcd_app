@@ -1,17 +1,42 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { currentUser } from '../data/fakeData'
+import { adminUser } from '../data/fakeData'
 import { useState } from 'react'
 
-export default function Layout({ children, onLogout }) {
+export default function Layout({ children, onLogout, userRole, currentMember }) {
   const location = useLocation()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
-  const navItems = [
+  const isAdmin = userRole === 'admin'
+
+  const memberNavItems = [
     { path: '/', label: 'Dashboard', icon: '📊' },
+    { path: '/profile', label: 'Profile', icon: '👤' },
     { path: '/history', label: 'Payment History', icon: '📜' },
     { path: '/pay', label: 'Make Payment', icon: '💳' },
     { path: '/sponsor', label: 'Sponsor', icon: '🕍' },
+    { path: '/statements', label: 'Statements', icon: '📄' },
   ]
+
+  const adminNavItems = [
+    { path: '/admin', label: 'Dashboard', icon: '📊' },
+    { path: '/admin/members', label: 'Members', icon: '👥' },
+    { path: '/admin/pledges', label: 'Pledges & Payments', icon: '💰' },
+    { path: '/admin/transactions', label: 'Transactions', icon: '🧾' },
+    { path: '/admin/sponsorship', label: 'Sponsorships', icon: '🕍' },
+    { path: '/admin/yahrzeits', label: 'Yahrzeits', icon: '🕯️' },
+    { path: '/admin/birthdays', label: "Birthdays & B'nei Mitzvah", icon: '🎂' },
+    { path: '/admin/emails', label: 'Email Center', icon: '📧' },
+    { path: '/admin/settings', label: 'Settings', icon: '⚙️' },
+  ]
+
+  const navItems = isAdmin ? adminNavItems : memberNavItems
+  const displayUser = isAdmin ? adminUser : currentMember
+  const displayName = isAdmin
+    ? 'Admin'
+    : `${displayUser?.firstName || ''} ${displayUser?.lastName || ''}`
+  const initials = isAdmin
+    ? 'A'
+    : `${displayUser?.firstName?.[0] || ''}${displayUser?.lastName?.[0] || ''}`
 
   return (
     <div className="portal-layout">
@@ -31,17 +56,20 @@ export default function Layout({ children, onLogout }) {
               <img src="/stcd_logo.png" alt="STCD Logo" />
               <div className="portal-logo-text">
                 <span className="portal-logo-title">STCD</span>
-                <span className="portal-logo-subtitle">Member Portal</span>
+                <span className="portal-logo-subtitle">
+                  {isAdmin ? 'Admin Portal' : 'Member Portal'}
+                </span>
               </div>
             </div>
+            {isAdmin && <span className="admin-mode-badge">ADMIN</span>}
           </div>
           <div className="portal-header-right">
             <div className="portal-user-info">
               <div className="portal-user-avatar">
-                {currentUser.firstName[0]}{currentUser.lastName[0]}
+                {initials}
               </div>
               <span className="portal-user-name">
-                {currentUser.firstName} {currentUser.lastName}
+                {displayName}
               </span>
             </div>
             <button className="portal-logout-btn" onClick={onLogout}>
@@ -59,7 +87,7 @@ export default function Layout({ children, onLogout }) {
               <NavLink
                 key={item.path}
                 to={item.path}
-                end={item.path === '/'}
+                end={item.path === '/' || item.path === '/admin'}
                 className={({ isActive }) =>
                   `portal-nav-item ${isActive ? 'active' : ''}`
                 }
@@ -71,7 +99,11 @@ export default function Layout({ children, onLogout }) {
             ))}
           </nav>
           <div className="portal-sidebar-footer">
-            <p className="portal-member-id">ID: {currentUser.memberId}</p>
+            {isAdmin ? (
+              <p className="portal-member-id">Admin Panel</p>
+            ) : (
+              <p className="portal-member-id">ID: {displayUser?.memberId}</p>
+            )}
           </div>
         </aside>
 
