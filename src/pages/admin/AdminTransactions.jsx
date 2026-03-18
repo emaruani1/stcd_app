@@ -166,7 +166,7 @@ export default function AdminTransactions({
     }
   }
 
-  const selectedMemberForAdd = allMembers.find(m => m.id === Number(newTxn.memberId))
+  const selectedMemberForAdd = allMembers.find(m => String(m.id) === String(newTxn.memberId))
   const unpaidPledges = selectedMemberForAdd
     ? selectedMemberForAdd.pledges.filter(p => !p.paid && !p.canceled && p.category === 'pledge')
     : []

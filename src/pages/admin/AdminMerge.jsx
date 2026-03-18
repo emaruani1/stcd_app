@@ -23,8 +23,8 @@ export default function AdminMerge({
     setTimeout(() => setToast(''), 4000)
   }
 
-  const primaryMember = allMembers.find(m => m.id === Number(primaryId))
-  const secondaryMember = allMembers.find(m => m.id === Number(secondaryId))
+  const primaryMember = allMembers.find(m => String(m.id) === String(primaryId))
+  const secondaryMember = allMembers.find(m => String(m.id) === String(secondaryId))
 
   const profileFields = [
     { key: 'firstName', label: 'First Name' },
@@ -111,7 +111,7 @@ export default function AdminMerge({
                 <label>Primary Account (keeps ID)</label>
                 <select value={primaryId} onChange={e => { setPrimaryId(e.target.value); setFieldOverrides({}) }}>
                   <option value="">Select member...</option>
-                  {allMembers.filter(m => m.id !== Number(secondaryId)).map(m => (
+                  {allMembers.filter(m => String(m.id) !== String(secondaryId)).map(m => (
                     <option key={m.id} value={m.id}>{m.firstName} {m.lastName} ({m.memberId})</option>
                   ))}
                 </select>
@@ -120,7 +120,7 @@ export default function AdminMerge({
                 <label>Secondary Account (will be absorbed)</label>
                 <select value={secondaryId} onChange={e => { setSecondaryId(e.target.value); setFieldOverrides({}) }}>
                   <option value="">Select member...</option>
-                  {allMembers.filter(m => m.id !== Number(primaryId)).map(m => (
+                  {allMembers.filter(m => String(m.id) !== String(primaryId)).map(m => (
                     <option key={m.id} value={m.id}>{m.firstName} {m.lastName} ({m.memberId})</option>
                   ))}
                 </select>

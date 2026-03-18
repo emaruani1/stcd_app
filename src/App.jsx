@@ -18,6 +18,7 @@ import AdminEmails from './pages/admin/AdminEmails'
 import AdminSettings from './pages/admin/AdminSettings'
 import AdminTransactions from './pages/admin/AdminTransactions'
 import AdminMerge from './pages/admin/AdminMerge'
+import AdminMemberEdit from './pages/admin/AdminMemberEdit'
 import { logout, getCurrentSession } from './auth'
 import * as api from './api'
 import './App.css'
@@ -463,6 +464,15 @@ function App() {
                 setMemberBalances={setMemberBalances}
                 adminTransactions={adminTransactions}
                 setAdminTransactions={() => {}}
+                refreshData={refreshData}
+              />
+            }
+          />
+          <Route
+            path="/admin/members/:memberId/edit"
+            element={
+              <AdminMemberEdit
+                allMembers={allMembers}
                 refreshData={refreshData}
               />
             }

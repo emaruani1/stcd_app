@@ -12,8 +12,6 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
   const [aliasInput, setAliasInput] = useState('')
   const [toast, setToast] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
-  const [showEditModal, setShowEditModal] = useState(false)
-  const [editMember, setEditMember] = useState(null)
   const [newContact, setNewContact] = useState({
     firstName: '', lastName: '', email: '', phone: '',
     address: '', city: '', state: '', zip: '',
@@ -47,46 +45,6 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
       setShowAddModal(false)
       setNewContact({ firstName: '', lastName: '', email: '', phone: '', address: '', city: '', state: '', zip: '', contactType: '', formalSalutation: '' })
       showToast('Contact added')
-      if (refreshData) refreshData()
-    } catch (err) {
-      showToast('Error: ' + err.message)
-    }
-  }
-
-  const startEditMember = (m) => {
-    setEditMember({ ...m })
-    setShowEditModal(true)
-  }
-
-  const handleSaveEdit = async () => {
-    if (!editMember) return
-    try {
-      await api.updateMember(String(editMember.id), {
-        firstName: editMember.firstName,
-        lastName: editMember.lastName,
-        email: editMember.email,
-        phone: editMember.phone,
-        address: editMember.address,
-        addressLine2: editMember.addressLine2 || '',
-        city: editMember.city,
-        state: editMember.state,
-        zip: editMember.zip,
-        contactType: editMember.contactType,
-        formalSalutation: editMember.formalSalutation,
-        dearWho: editMember.dearWho || '',
-        gender: editMember.gender,
-        dob: editMember.dob,
-        spouseName: editMember.spouseName,
-        spouseGender: editMember.spouseGender,
-        spouseDob: editMember.spouseDob,
-        marriageDate: editMember.marriageDate,
-        membershipType: editMember.membershipType,
-        membershipPlan: editMember.membershipPlan,
-        memberSince: editMember.memberSince,
-      })
-      setShowEditModal(false)
-      setEditMember(null)
-      showToast('Profile updated')
       if (refreshData) refreshData()
     } catch (err) {
       showToast('Error: ' + err.message)
@@ -311,7 +269,7 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
                             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
                               <button
                                 className="action-btn action-btn-pay"
-                                onClick={(e) => { e.stopPropagation(); startEditMember(m) }}
+                                onClick={(e) => { e.stopPropagation(); navigate(`/admin/members/${m.id}/edit`) }}
                               >
                                 Edit Profile
                               </button>
@@ -406,149 +364,6 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
           </table>
         </div>
       </div>
-
-      {/* Edit Profile Modal */}
-      {showEditModal && editMember && (
-        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '600px', maxHeight: '85vh', overflowY: 'auto' }}>
-            <button className="modal-close" onClick={() => setShowEditModal(false)}>&times;</button>
-            <h2 className="modal-title">Edit Profile — {editMember.firstName} {editMember.lastName}</h2>
-            <div className="modal-body">
-              <h4 style={{ margin: '0 0 0.75rem', color: 'var(--text-light)' }}>Personal Info</h4>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>First Name</label>
-                  <input type="text" value={editMember.firstName} onChange={e => setEditMember(prev => ({ ...prev, firstName: e.target.value }))} />
-                </div>
-                <div className="form-group">
-                  <label>Last Name</label>
-                  <input type="text" value={editMember.lastName} onChange={e => setEditMember(prev => ({ ...prev, lastName: e.target.value }))} />
-                </div>
-              </div>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Email</label>
-                  <input type="email" value={editMember.email} onChange={e => setEditMember(prev => ({ ...prev, email: e.target.value }))} />
-                </div>
-                <div className="form-group">
-                  <label>Phone</label>
-                  <input type="tel" value={editMember.phone} onChange={e => setEditMember(prev => ({ ...prev, phone: e.target.value }))} />
-                </div>
-              </div>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Gender</label>
-                  <select value={editMember.gender} onChange={e => setEditMember(prev => ({ ...prev, gender: e.target.value }))}>
-                    <option value="">—</option>
-                    <option value="male">Male</option>
-                    <option value="female">Female</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>Date of Birth</label>
-                  <input type="date" value={editMember.dob} onChange={e => setEditMember(prev => ({ ...prev, dob: e.target.value }))} />
-                </div>
-              </div>
-
-              <h4 style={{ margin: '1.25rem 0 0.75rem', color: 'var(--text-light)' }}>Address</h4>
-              <div className="form-group">
-                <label>Address Line 1</label>
-                <input type="text" value={editMember.address} onChange={e => setEditMember(prev => ({ ...prev, address: e.target.value }))} />
-              </div>
-              <div className="form-group">
-                <label>Address Line 2</label>
-                <input type="text" value={editMember.addressLine2 || ''} onChange={e => setEditMember(prev => ({ ...prev, addressLine2: e.target.value }))} />
-              </div>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>City</label>
-                  <input type="text" value={editMember.city} onChange={e => setEditMember(prev => ({ ...prev, city: e.target.value }))} />
-                </div>
-                <div className="form-group">
-                  <label>State</label>
-                  <input type="text" value={editMember.state} onChange={e => setEditMember(prev => ({ ...prev, state: e.target.value }))} />
-                </div>
-                <div className="form-group">
-                  <label>ZIP</label>
-                  <input type="text" value={editMember.zip} onChange={e => setEditMember(prev => ({ ...prev, zip: e.target.value }))} />
-                </div>
-              </div>
-
-              <h4 style={{ margin: '1.25rem 0 0.75rem', color: 'var(--text-light)' }}>Spouse</h4>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Spouse Name</label>
-                  <input type="text" value={editMember.spouseName} onChange={e => setEditMember(prev => ({ ...prev, spouseName: e.target.value }))} />
-                </div>
-                <div className="form-group">
-                  <label>Spouse Gender</label>
-                  <select value={editMember.spouseGender} onChange={e => setEditMember(prev => ({ ...prev, spouseGender: e.target.value }))}>
-                    <option value="">—</option>
-                    <option value="male">Male</option>
-                    <option value="female">Female</option>
-                  </select>
-                </div>
-              </div>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Spouse DOB</label>
-                  <input type="date" value={editMember.spouseDob} onChange={e => setEditMember(prev => ({ ...prev, spouseDob: e.target.value }))} />
-                </div>
-                <div className="form-group">
-                  <label>Marriage Date</label>
-                  <input type="date" value={editMember.marriageDate} onChange={e => setEditMember(prev => ({ ...prev, marriageDate: e.target.value }))} />
-                </div>
-              </div>
-
-              <h4 style={{ margin: '1.25rem 0 0.75rem', color: 'var(--text-light)' }}>Membership</h4>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Contact Type</label>
-                  <select value={editMember.contactType} onChange={e => setEditMember(prev => ({ ...prev, contactType: e.target.value }))}>
-                    <option value="">—</option>
-                    <option value="MEMBER">Member</option>
-                    <option value="REGULAR">Regular</option>
-                    <option value="FRIEND OF STCD">Friend of STCD</option>
-                    <option value="OCCASIONAL DONOR">Occasional Donor</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>Membership Type</label>
-                  <select value={editMember.membershipType} onChange={e => setEditMember(prev => ({ ...prev, membershipType: e.target.value }))}>
-                    <option value="">—</option>
-                    <option value="full">Full Member</option>
-                    <option value="associate">Associate Member</option>
-                  </select>
-                </div>
-              </div>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Membership Plan</label>
-                  <select value={editMember.membershipPlan} onChange={e => setEditMember(prev => ({ ...prev, membershipPlan: e.target.value }))}>
-                    <option value="">—</option>
-                    <option value="single">Single</option>
-                    <option value="couple">Couple</option>
-                    <option value="family">Family</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>Member Since</label>
-                  <input type="date" value={editMember.memberSince} onChange={e => setEditMember(prev => ({ ...prev, memberSince: e.target.value }))} />
-                </div>
-              </div>
-              <div className="form-group">
-                <label>Formal Salutation</label>
-                <input type="text" value={editMember.formalSalutation} onChange={e => setEditMember(prev => ({ ...prev, formalSalutation: e.target.value }))} />
-              </div>
-
-              <div className="modal-actions" style={{ marginTop: '1.5rem' }}>
-                <button className="modal-btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
-                <button className="pay-btn" style={{ padding: '10px 24px' }} onClick={handleSaveEdit}>Save Changes</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Add Contact Modal */}
       {showAddModal && (

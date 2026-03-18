@@ -1,0 +1,417 @@
+import { useState, useEffect } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import * as api from '../../api'
+
+const HEBREW_MONTHS = [
+  'Nisan', 'Iyyar', 'Sivan', 'Tammuz', 'Av', 'Elul',
+  'Tishrei', 'Cheshvan', 'Kislev', 'Tevet', 'Shevat', 'Adar', 'Adar II',
+]
+
+const PARSHIYOT = [
+  'Bereishit', 'Noach', 'Lech Lecha', 'Vayera', 'Chayei Sarah', 'Toldot', 'Vayetzei', 'Vayishlach', 'Vayeshev', 'Miketz', 'Vayigash', 'Vayechi',
+  'Shemot', 'Vaera', 'Bo', 'Beshalach', 'Yitro', 'Mishpatim', 'Terumah', 'Tetzaveh', 'Ki Tisa', 'Vayakhel', 'Pekudei',
+  'Vayikra', 'Tzav', 'Shemini', 'Tazria', 'Metzora', 'Acharei Mot', 'Kedoshim', 'Emor', 'Behar', 'Bechukotai',
+  'Bamidbar', 'Naso', 'Behaalotcha', 'Shelach', 'Korach', 'Chukat', 'Balak', 'Pinchas', 'Matot', 'Masei',
+  'Devarim', 'Vaetchanan', 'Eikev', 'Re\'eh', 'Shoftim', 'Ki Teitzei', 'Ki Tavo', 'Nitzavim', 'Vayeilech', 'Haazinu', 'V\'Zot HaBrachah',
+]
+
+const emptyYahrzeit = () => ({ name: '', gender: '', relationship: '', date: '', useHebrew: false, hebrewDay: '', hebrewMonth: '', hebrewYear: '' })
+const emptyChild = () => ({ name: '', gender: '', dob: '', useHebrew: false, hebrewDay: '', hebrewMonth: '', hebrewYear: '', parasha: '', barBatMitzvahDate: '' })
+
+export default function AdminMemberEdit({ allMembers, refreshData }) {
+  const { memberId } = useParams()
+  const navigate = useNavigate()
+  const member = allMembers.find(m => String(m.id) === String(memberId))
+
+  const [form, setForm] = useState(null)
+  const [toast, setToast] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (member) {
+      setForm({
+        firstName: member.firstName || '',
+        lastName: member.lastName || '',
+        gender: member.gender || '',
+        email: member.email || '',
+        phone: member.phone || '',
+        dob: member.dob || '',
+        dobIsHebrew: false,
+        dobHebrew: { day: '', month: '', year: '' },
+        address: member.address || '',
+        addressLine2: member.addressLine2 || '',
+        city: member.city || '',
+        state: member.state || '',
+        zip: member.zip || '',
+        spouseName: member.spouseName || '',
+        spouseGender: member.spouseGender || '',
+        spouseDob: member.spouseDob || '',
+        spouseDobIsHebrew: false,
+        spouseDobHebrew: { day: '', month: '', year: '' },
+        marriageDate: member.marriageDate || '',
+        marriageDateIsHebrew: false,
+        marriageDateHebrew: { day: '', month: '', year: '' },
+        contactType: member.contactType || '',
+        membershipType: member.membershipType || '',
+        membershipPlan: member.membershipPlan || '',
+        memberSince: member.memberSince || '',
+        formalSalutation: member.formalSalutation || '',
+        dearWho: member.dearWho || '',
+        yahrzeits: (member.yahrzeits || []).map(y => ({ ...y, useHebrew: false })),
+        children: (member.children || []).map(c => ({ ...c, useHebrew: false })),
+      })
+    }
+  }, [member])
+
+  if (!member) {
+    return (
+      <div className="dashboard-page">
+        <h1 className="page-title">Member not found</h1>
+        <button className="pay-btn" onClick={() => navigate('/admin/members')}>Back to Members</button>
+      </div>
+    )
+  }
+
+  if (!form) return null
+
+  const updateField = (field, value) => setForm(prev => ({ ...prev, [field]: value }))
+  const updateHebrewDate = (field, part, value) => setForm(prev => ({ ...prev, [field]: { ...prev[field], [part]: value } }))
+
+  // Yahrzeits
+  const addYahrzeit = () => setForm(prev => ({ ...prev, yahrzeits: [...prev.yahrzeits, emptyYahrzeit()] }))
+  const removeYahrzeit = (idx) => setForm(prev => ({ ...prev, yahrzeits: prev.yahrzeits.filter((_, i) => i !== idx) }))
+  const updateYahrzeit = (idx, field, value) => setForm(prev => ({
+    ...prev, yahrzeits: prev.yahrzeits.map((y, i) => i === idx ? { ...y, [field]: value } : y),
+  }))
+
+  // Children
+  const addChild = () => setForm(prev => ({ ...prev, children: [...prev.children, emptyChild()] }))
+  const removeChild = (idx) => setForm(prev => ({ ...prev, children: prev.children.filter((_, i) => i !== idx) }))
+  const updateChild = (idx, field, value) => setForm(prev => ({
+    ...prev, children: prev.children.map((c, i) => i === idx ? { ...c, [field]: value } : c),
+  }))
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      // Clean yahrzeits/children for storage (remove UI-only fields)
+      const yahrzeits = form.yahrzeits.map(({ useHebrew, ...y }) => y)
+      const children = form.children.map(({ useHebrew, ...c }) => c)
+
+      await api.updateMember(String(memberId), {
+        firstName: form.firstName,
+        lastName: form.lastName,
+        gender: form.gender,
+        email: form.email,
+        phone: form.phone,
+        dob: form.dob,
+        address: form.address,
+        addressLine2: form.addressLine2,
+        city: form.city,
+        state: form.state,
+        zip: form.zip,
+        spouseName: form.spouseName,
+        spouseGender: form.spouseGender,
+        spouseDob: form.spouseDob,
+        marriageDate: form.marriageDate,
+        contactType: form.contactType,
+        membershipType: form.membershipType,
+        membershipPlan: form.membershipPlan,
+        memberSince: form.memberSince,
+        formalSalutation: form.formalSalutation,
+        dearWho: form.dearWho,
+        yahrzeits,
+        children,
+      })
+      setToast('Profile saved successfully!')
+      setTimeout(() => setToast(''), 3000)
+      if (refreshData) refreshData()
+    } catch (err) {
+      setToast('Error: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const renderDateInput = (label, dateField, hebrewToggleField, hebrewField, showYear = true) => {
+    const isHebrew = form[hebrewToggleField]
+    const hebrewVal = form[hebrewField] || { day: '', month: '', year: '' }
+    return (
+      <div className="form-group">
+        <div className="date-label-row">
+          <label>{label}</label>
+          <button type="button" className={`date-mode-btn ${isHebrew ? 'hebrew' : ''}`} onClick={() => updateField(hebrewToggleField, !isHebrew)}>
+            {isHebrew ? 'Hebrew' : 'Gregorian'}
+          </button>
+        </div>
+        {isHebrew ? (
+          <div className="hebrew-date-inputs">
+            <input type="number" min="1" max="30" placeholder="Day" value={hebrewVal.day} onChange={e => updateHebrewDate(hebrewField, 'day', e.target.value)} />
+            <select value={hebrewVal.month} onChange={e => updateHebrewDate(hebrewField, 'month', e.target.value)}>
+              <option value="">Month</option>
+              {HEBREW_MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+            {showYear && <input type="number" min="5000" max="6000" placeholder="Year" value={hebrewVal.year} onChange={e => updateHebrewDate(hebrewField, 'year', e.target.value)} />}
+          </div>
+        ) : (
+          <input type="date" value={form[dateField]} onChange={e => updateField(dateField, e.target.value)} />
+        )}
+      </div>
+    )
+  }
+
+  const renderItemDateInput = (label, item, idx, updateFn, showYear = true) => {
+    const isHebrew = item.useHebrew
+    return (
+      <div className="form-group">
+        <div className="date-label-row">
+          <label>{label}</label>
+          <button type="button" className={`date-mode-btn ${isHebrew ? 'hebrew' : ''}`} onClick={() => updateFn(idx, 'useHebrew', !isHebrew)}>
+            {isHebrew ? 'Hebrew' : 'Gregorian'}
+          </button>
+        </div>
+        {isHebrew ? (
+          <div className="hebrew-date-inputs">
+            <input type="number" min="1" max="30" placeholder="Day" value={item.hebrewDay || ''} onChange={e => updateFn(idx, 'hebrewDay', e.target.value)} />
+            <select value={item.hebrewMonth || ''} onChange={e => updateFn(idx, 'hebrewMonth', e.target.value)}>
+              <option value="">Month</option>
+              {HEBREW_MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+            {showYear && <input type="number" min="5000" max="6000" placeholder="Year" value={item.hebrewYear || ''} onChange={e => updateFn(idx, 'hebrewYear', e.target.value)} />}
+          </div>
+        ) : (
+          <input type="date" value={item.date || item.dob || ''} onChange={e => updateFn(idx, item.dob !== undefined ? 'dob' : 'date', e.target.value)} />
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="profile-page">
+      <div className="page-title-row">
+        <div>
+          <h1 className="page-title">Edit: {member.firstName} {member.lastName}</h1>
+          <p className="page-subtitle">Member ID: {member.memberId || member.id}</p>
+        </div>
+        <button className="modal-btn-secondary" style={{ padding: '10px 20px' }} onClick={() => navigate('/admin/members')}>
+          Back to Members
+        </button>
+      </div>
+
+      {toast && <div className="success-toast">{toast}</div>}
+
+      {/* Personal Info */}
+      <div className="profile-section">
+        <h2 className="profile-section-title">Personal Information</h2>
+        <div className="profile-form-grid">
+          <div className="form-group">
+            <label>First Name</label>
+            <input type="text" value={form.firstName} onChange={e => updateField('firstName', e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label>Last Name</label>
+            <input type="text" value={form.lastName} onChange={e => updateField('lastName', e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label>Gender</label>
+            <select value={form.gender} onChange={e => updateField('gender', e.target.value)}>
+              <option value="">Select</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Email</label>
+            <input type="email" value={form.email} onChange={e => updateField('email', e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label>Phone</label>
+            <input type="tel" value={form.phone} onChange={e => updateField('phone', e.target.value)} />
+          </div>
+          {renderDateInput('Date of Birth', 'dob', 'dobIsHebrew', 'dobHebrew')}
+          <div className="form-group">
+            <label>Formal Salutation</label>
+            <input type="text" value={form.formalSalutation} onChange={e => updateField('formalSalutation', e.target.value)} placeholder="e.g. Mr. and Mrs. Cohen" />
+          </div>
+          <div className="form-group">
+            <label>Dear Who</label>
+            <input type="text" value={form.dearWho} onChange={e => updateField('dearWho', e.target.value)} placeholder="e.g. David" />
+          </div>
+        </div>
+      </div>
+
+      {/* Address */}
+      <div className="profile-section">
+        <h2 className="profile-section-title">Address</h2>
+        <div className="profile-form-grid">
+          <div className="form-group full-width">
+            <label>Street Address</label>
+            <input type="text" value={form.address} onChange={e => updateField('address', e.target.value)} />
+          </div>
+          <div className="form-group full-width">
+            <label>Address Line 2</label>
+            <input type="text" value={form.addressLine2} onChange={e => updateField('addressLine2', e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label>City</label>
+            <input type="text" value={form.city} onChange={e => updateField('city', e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label>State</label>
+            <input type="text" value={form.state} onChange={e => updateField('state', e.target.value)} maxLength="2" />
+          </div>
+          <div className="form-group">
+            <label>Zip Code</label>
+            <input type="text" value={form.zip} onChange={e => updateField('zip', e.target.value)} maxLength="10" />
+          </div>
+        </div>
+      </div>
+
+      {/* Spouse */}
+      <div className="profile-section">
+        <h2 className="profile-section-title">Spouse</h2>
+        <div className="profile-form-grid">
+          <div className="form-group">
+            <label>Spouse Name</label>
+            <input type="text" value={form.spouseName} onChange={e => updateField('spouseName', e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label>Spouse Gender</label>
+            <select value={form.spouseGender} onChange={e => updateField('spouseGender', e.target.value)}>
+              <option value="">Select</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
+          </div>
+          {renderDateInput('Spouse DOB', 'spouseDob', 'spouseDobIsHebrew', 'spouseDobHebrew')}
+          {renderDateInput('Marriage Date', 'marriageDate', 'marriageDateIsHebrew', 'marriageDateHebrew')}
+        </div>
+      </div>
+
+      {/* Membership */}
+      <div className="profile-section">
+        <h2 className="profile-section-title">Membership</h2>
+        <div className="profile-form-grid">
+          <div className="form-group">
+            <label>Contact Type</label>
+            <select value={form.contactType} onChange={e => updateField('contactType', e.target.value)}>
+              <option value="">—</option>
+              <option value="MEMBER">Member</option>
+              <option value="REGULAR">Regular</option>
+              <option value="FRIEND OF STCD">Friend of STCD</option>
+              <option value="OCCASIONAL DONOR">Occasional Donor</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Membership Type</label>
+            <select value={form.membershipType} onChange={e => updateField('membershipType', e.target.value)}>
+              <option value="">—</option>
+              <option value="full">Full Member</option>
+              <option value="associate">Associate Member</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Membership Plan</label>
+            <select value={form.membershipPlan} onChange={e => updateField('membershipPlan', e.target.value)}>
+              <option value="">—</option>
+              <option value="single">Single</option>
+              <option value="couple">Couple</option>
+              <option value="family">Family</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Member Since</label>
+            <input type="date" value={form.memberSince} onChange={e => updateField('memberSince', e.target.value)} />
+          </div>
+        </div>
+      </div>
+
+      {/* Yahrzeits */}
+      <div className="profile-section">
+        <h2 className="profile-section-title">Yahrzeit Dates</h2>
+        <div className="dynamic-list">
+          {form.yahrzeits.map((y, idx) => (
+            <div key={idx} className="dynamic-list-item">
+              <div className="form-group" style={{ flex: 2 }}>
+                <label>Name</label>
+                <input type="text" value={y.name} onChange={e => updateYahrzeit(idx, 'name', e.target.value)} placeholder="e.g. Avraham ben Yitzhak" />
+              </div>
+              <div className="form-group">
+                <label>Gender</label>
+                <select value={y.gender} onChange={e => updateYahrzeit(idx, 'gender', e.target.value)}>
+                  <option value="">Select</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Relationship</label>
+                <select value={y.relationship} onChange={e => updateYahrzeit(idx, 'relationship', e.target.value)}>
+                  <option value="">Select</option>
+                  <option value="father">Father</option>
+                  <option value="mother">Mother</option>
+                  <option value="father-in-law">Father-in-law</option>
+                  <option value="mother-in-law">Mother-in-law</option>
+                  <option value="spouse">Spouse</option>
+                  <option value="sibling">Sibling</option>
+                  <option value="child">Child</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              {renderItemDateInput('Date', y, idx, updateYahrzeit, false)}
+              <button className="remove-item-btn" onClick={() => removeYahrzeit(idx)} title="Remove">&times;</button>
+            </div>
+          ))}
+        </div>
+        <button className="add-item-btn" onClick={addYahrzeit}>+ Add Yahrzeit</button>
+      </div>
+
+      {/* Children */}
+      <div className="profile-section">
+        <h2 className="profile-section-title">Children</h2>
+        <div className="dynamic-list">
+          {form.children.map((c, idx) => (
+            <div key={idx} className="dynamic-list-item">
+              <div className="form-group" style={{ flex: 2 }}>
+                <label>Name</label>
+                <input type="text" value={c.name} onChange={e => updateChild(idx, 'name', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>Gender</label>
+                <select value={c.gender} onChange={e => updateChild(idx, 'gender', e.target.value)}>
+                  <option value="">Select</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                </select>
+              </div>
+              {renderItemDateInput('Birthday', c, idx, updateChild)}
+              <div className="form-group">
+                <label>Bar/Bat Mitzvah Date</label>
+                <input type="date" value={c.barBatMitzvahDate || ''} onChange={e => updateChild(idx, 'barBatMitzvahDate', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>Parasha</label>
+                <select value={c.parasha || ''} onChange={e => updateChild(idx, 'parasha', e.target.value)}>
+                  <option value="">Select Parasha</option>
+                  {PARSHIYOT.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+              <button className="remove-item-btn" onClick={() => removeChild(idx)} title="Remove">&times;</button>
+            </div>
+          ))}
+        </div>
+        <button className="add-item-btn" onClick={addChild}>+ Add Child</button>
+      </div>
+
+      {/* Save */}
+      <div className="profile-save-row">
+        <button className="modal-btn-secondary" style={{ padding: '12px 24px', marginRight: '0.75rem' }} onClick={() => navigate('/admin/members')}>
+          Cancel
+        </button>
+        <button className="pay-btn" style={{ padding: '12px 32px' }} onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving...' : 'Save Profile'}
+        </button>
+      </div>
+    </div>
+  )
+}
