@@ -17,11 +17,28 @@ sponsorships_table = dynamodb.Table(os.environ.get('SPONSORSHIPS_TABLE', 'stcd_s
 emails_table = dynamodb.Table(os.environ.get('EMAILS_TABLE', 'stcd_emails'))
 settings_table = dynamodb.Table(os.environ.get('SETTINGS_TABLE', 'stcd_settings'))
 
-CORS_HEADERS = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-}
+ALLOWED_ORIGINS = [
+    'https://main.dvy7odxzbdj95.amplifyapp.com',
+    'http://localhost:5173',
+    'http://localhost:3000',
+]
+
+
+def get_cors_headers(event):
+    origin = ''
+    headers = event.get('headers') or {}
+    # Headers can be mixed case from API Gateway
+    for k, v in headers.items():
+        if k.lower() == 'origin':
+            origin = v
+            break
+    allowed = origin if origin in ALLOWED_ORIGINS else ALLOWED_ORIGINS[0]
+    return {
+        'Access-Control-Allow-Origin': allowed,
+        'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+        'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+        'Access-Control-Allow-Credentials': 'true',
+    }
 
 
 def _json_default(obj):
@@ -32,10 +49,13 @@ def _json_default(obj):
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 
+_current_event = {'headers': {}}
+
+
 def respond(status, body):
     return {
         'statusCode': status,
-        'headers': CORS_HEADERS,
+        'headers': get_cors_headers(_current_event),
         'body': json.dumps(body, default=_json_default),
     }
 
@@ -54,6 +74,9 @@ def extract_path_id(path, prefix):
 
 
 def lambda_handler(event, context):
+    global _current_event
+    _current_event = event
+
     method = event.get('httpMethod', '')
     path = event.get('path', '')
 

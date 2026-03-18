@@ -1,10 +1,22 @@
+import { getCurrentSession } from './auth'
+
 const API_BASE = import.meta.env.VITE_API_URL
 
+async function getAuthToken() {
+  const session = await getCurrentSession()
+  return session?.token || ''
+}
+
 async function request(path, options = {}) {
+  const token = await getAuthToken()
   const url = `${API_BASE}${path}`
   const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: token } : {}),
+      ...options.headers,
+    },
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
