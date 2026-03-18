@@ -320,6 +320,7 @@ def create_transaction(body):
         'category': body.get('category', ''),
         'groupId': body.get('groupId', ''),
         'pledgeId': body.get('pledgeId', ''),
+        'productId': body.get('productId', ''),
     }
     # Clean empty strings
     item = {k: v for k, v in item.items() if v != '' or k in ('memberId', 'transactionId', 'date')}

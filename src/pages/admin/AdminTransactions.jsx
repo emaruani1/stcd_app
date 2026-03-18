@@ -50,11 +50,15 @@ export default function AdminTransactions({
 
   // Merge all transactions from all members + admin transactions
   const allTransactions = useMemo(() => {
+    const productMap = {}
+    for (const p of products) productMap[p.id] = p.name
+
     const fromMembers = allMembers.flatMap(m =>
       m.paymentHistory.map(p => ({
         ...p,
         memberId: m.id,
         memberName: `${m.firstName} ${m.lastName}`,
+        productName: p.productId ? (productMap[p.productId] || p.productId) : '',
         source: 'member',
       }))
     )
@@ -63,11 +67,12 @@ export default function AdminTransactions({
       return {
         ...t,
         memberName: member ? `${member.firstName} ${member.lastName}` : 'Unknown',
+        productName: t.productId ? (productMap[t.productId] || t.productId) : '',
         source: 'admin',
       }
     })
     return [...fromMembers, ...fromAdmin].sort((a, b) => new Date(b.date) - new Date(a.date))
-  }, [allMembers, adminTransactions])
+  }, [allMembers, adminTransactions, products])
 
   const filtered = allTransactions.filter(t => {
     if (memberFilter !== 'all' && String(t.memberId) !== String(memberFilter)) return false
@@ -99,6 +104,7 @@ export default function AdminTransactions({
         method: newTxn.method,
         paymentType: newTxn.paymentType,
         pledgeId: newTxn.pledgeId || '',
+        productId: newTxn.productId || '',
       })
 
       // Apply to member credit if checked
@@ -210,6 +216,7 @@ export default function AdminTransactions({
                 <th>Member</th>
                 <th>Date</th>
                 <th>Description</th>
+                <th>Product</th>
                 <th>Type</th>
                 <th>Amount</th>
                 <th>Method</th>
@@ -218,13 +225,14 @@ export default function AdminTransactions({
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan="7" className="empty-row">No transactions found</td></tr>
+                <tr><td colSpan="8" className="empty-row">No transactions found</td></tr>
               ) : (
                 filtered.map((t, idx) => (
                   <tr key={`${t.source}-${t.id}-${idx}`}>
                     <td><strong>{t.memberName}</strong></td>
                     <td>{formatDate(t.date)}</td>
                     <td>{t.description}</td>
+                    <td style={{ fontSize: '0.82rem' }}>{t.productName || t.productId || '—'}</td>
                     <td>{paymentTypeBadge(t.paymentType)}</td>
                     <td className="amount-cell">${(t.amount || 0).toLocaleString()}</td>
                     <td>{t.method}</td>

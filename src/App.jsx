@@ -107,6 +107,7 @@ function App() {
           method: t.method || t.source || '',
           paymentType: t.paymentType || '',
           groupId: t.groupId || '',
+          productId: t.productId || '',
         })
       }
 
