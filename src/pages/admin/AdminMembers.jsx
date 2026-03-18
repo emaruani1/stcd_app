@@ -248,6 +248,7 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
                                 <thead>
                                   <tr>
                                     <th>Description</th>
+                                    <th>Occasion</th>
                                     <th>Category</th>
                                     <th>Date</th>
                                     <th>Amount</th>
@@ -259,6 +260,7 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
                                   {m.pledges.slice(0, 10).map(p => (
                                     <tr key={p.id}>
                                       <td>{p.description}</td>
+                                      <td style={{ fontSize: '0.82rem' }}>{p.occasion || '—'}</td>
                                       <td>{categoryBadge(p.category)}</td>
                                       <td>{formatDate(p.date)}</td>
                                       <td className="amount-cell">${p.amount.toLocaleString()}</td>

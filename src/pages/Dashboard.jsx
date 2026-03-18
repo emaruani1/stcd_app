@@ -51,13 +51,11 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
   }
 
   const today = new Date()
-  const upcomingPledges = unpaidPledges
-    .filter(p => new Date(p.date + 'T00:00:00') >= today)
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
-    .slice(0, 5)
+  const fortyFiveDaysAgo = new Date(today)
+  fortyFiveDaysAgo.setDate(fortyFiveDaysAgo.getDate() - 45)
 
   const overduePledges = unpaidPledges
-    .filter(p => new Date(p.date + 'T00:00:00') < today)
+    .filter(p => new Date(p.date + 'T00:00:00') < fortyFiveDaysAgo)
     .sort((a, b) => new Date(a.date) - new Date(b.date))
 
   const tier = membershipTiers[currentMember.membershipType] || { label: currentMember.contactType || 'Contact', plans: {} }
@@ -126,6 +124,7 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
               <thead>
                 <tr>
                   <th>Description</th>
+                  <th>Occasion</th>
                   <th>Category</th>
                   <th>Date</th>
                   <th>Amount</th>
@@ -136,6 +135,7 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
                 {overduePledges.map(p => (
                   <tr key={p.id} className="overdue-row">
                     <td>{p.description}</td>
+                    <td style={{ fontSize: '0.82rem' }}>{p.occasion || '—'}</td>
                     <td>{categoryBadge(p.category)}</td>
                     <td>{formatDate(p.date)}</td>
                     <td className="amount-cell">
@@ -152,49 +152,6 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
           </div>
         </div>
       )}
-
-      {/* Upcoming Pledges */}
-      <div className="dashboard-section">
-        <h2 className="section-title">Upcoming Pledges</h2>
-        <div className="pledges-table-wrap">
-          <table className="pledges-table">
-            <thead>
-              <tr>
-                <th>Description</th>
-                <th>Category</th>
-                <th>Date</th>
-                <th>Amount</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {upcomingPledges.length === 0 ? (
-                <tr><td colSpan="5" className="empty-row">No upcoming pledges</td></tr>
-              ) : (
-                upcomingPledges.map(p => (
-                  <tr key={p.id}>
-                    <td>{p.description}</td>
-                    <td>{categoryBadge(p.category)}</td>
-                    <td>{formatDate(p.date)}</td>
-                    <td className="amount-cell">
-                      ${p.amount.toLocaleString()}
-                      {p.remaining < p.amount && (
-                        <span className="remaining-badge">${p.remaining.toLocaleString()} remaining</span>
-                      )}
-                    </td>
-                    <td><span className="badge badge-pending">Pending</span></td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        {unpaidPledges.length > 5 && (
-          <button className="view-all-btn" onClick={() => navigate('/pay')}>
-            View All Pledges &amp; Pay
-          </button>
-        )}
-      </div>
 
       {/* Recent Payments */}
       <div className="dashboard-section">
