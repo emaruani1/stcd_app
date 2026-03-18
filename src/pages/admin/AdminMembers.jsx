@@ -185,7 +185,7 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
                               <div className="expanded-info-item"><strong>Member ID:</strong> {m.memberId}</div>
                               <div className="expanded-info-item"><strong>Since:</strong> {formatDate(m.memberSince)}</div>
                               <div className="expanded-info-item"><strong>Address:</strong> {m.address}, {m.city}, {m.state} {m.zip}</div>
-                              <div className="expanded-info-item"><strong>Account Balance:</strong> <span style={{ color: memberBal > 0 ? 'var(--success)' : 'var(--text-muted)', fontWeight: 600 }}>${memberBal.toLocaleString()}</span></div>
+                              <div className="expanded-info-item"><strong>Account Credit:</strong> <span style={{ color: memberBal > 0 ? 'var(--success)' : 'var(--text-muted)', fontWeight: 600 }}>${memberBal.toLocaleString()}</span></div>
                               {m.spouseName && <div className="expanded-info-item"><strong>Spouse:</strong> {m.spouseName}</div>}
                               {m.children.length > 0 && <div className="expanded-info-item"><strong>Children:</strong> {m.children.map(c => c.name).join(', ')}</div>}
                             </div>

@@ -271,7 +271,7 @@ export default function AccountStatements({
         <div className="summary-card">
           <div className="summary-card-icon balance-icon">B</div>
           <div className="summary-card-info">
-            <p className="summary-card-label">Account Balance</p>
+            <p className="summary-card-label">Account Credit</p>
             <p className="summary-card-value">${(member.balance || 0).toLocaleString()}</p>
           </div>
         </div>

@@ -109,7 +109,7 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
         <div className="summary-card clickable" onClick={() => navigate('/pay')}>
           <div className={`summary-card-icon ${currentBalance > 0 ? 'wallet-icon' : 'wallet-icon empty'}`}>&#128179;</div>
           <div className="summary-card-info">
-            <p className="summary-card-label">Account Balance</p>
+            <p className="summary-card-label">Account Credit</p>
             <p className={`summary-card-value ${currentBalance > 0 ? 'wallet-value' : 'wallet-value empty'}`}>${currentBalance.toLocaleString()}</p>
           </div>
         </div>

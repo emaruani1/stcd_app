@@ -172,7 +172,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
   const cardPortion = modalTotal - balancePortionUsed
 
   const getPaymentMethodLabel = () => {
-    if (effectiveSource === 'balance') return 'Account Balance'
+    if (effectiveSource === 'balance') return 'Account Credit'
     if (effectiveSource === 'split') return 'Balance + Card'
     return 'Credit Card'
   }
@@ -288,7 +288,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
               <div className="payment-method-radio-dot"></div>
             </div>
             <div className="payment-method-info">
-              <div className="payment-method-label">Account Balance</div>
+              <div className="payment-method-label">Account Credit</div>
               <div className="payment-method-desc">Available: ${currentBalance.toLocaleString()}</div>
             </div>
             <span className="payment-method-badge">${currentBalance.toLocaleString()}</span>
