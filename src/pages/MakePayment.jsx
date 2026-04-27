@@ -241,11 +241,12 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
           description: 'Account Deposit',
           amount: amt,
           method: 'Credit Card',
-          paymentType: 'membership',
+          paymentType: 'deposit',
           ...(selectedAlias ? { alias: selectedAlias } : {}),
           ...gw,
         })
       } catch (e) { console.error(e) }
+      // Optimistically reflect locally; refreshData() will pull the persisted value next
       setMemberBalances(prev => ({ ...prev, [currentMemberId]: (prev[currentMemberId] || 0) + amt }))
       setDepositAmount('')
       setDepositPreset(null)
@@ -254,11 +255,11 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
       setPaySuccess(true)
       setTimeout(() => setPaySuccess(false), 3000)
       setPaying(false)
-      if (refreshData) refreshData()
+      if (refreshData) await refreshData()
       return
     }
 
-    // Deduct from balance if applicable
+    // Optimistic local deduction; backend is authoritative via balanceApplied
     if (payingType !== 'deposit' && balancePortionUsed > 0) {
       setMemberBalances(prev => ({
         ...prev,
@@ -267,6 +268,13 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
     }
 
     const groupId = `grp-${Date.now()}`
+
+    // Distribute balancePortionUsed proportionally across line items so the
+    // backend can debit the member's stored credit by the correct amount per row.
+    const balancePortionFor = (lineAmount) => {
+      if (balancePortionUsed <= 0 || modalTotal <= 0) return 0
+      return Math.round((lineAmount / modalTotal) * balancePortionUsed * 100) / 100
+    }
 
     if (payingType === 'pledges') {
       const updates = {}
@@ -280,6 +288,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
             amount: payAmt,
             method: methodLabel,
             date: now,
+            balanceApplied: balancePortionFor(payAmt),
             ...(selectedAlias ? { alias: selectedAlias } : {}),
             ...gw,
             groupId,
@@ -298,6 +307,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
             method: methodLabel,
             paymentType: 'donation',
             groupId,
+            balanceApplied: balancePortionFor(extraDonation),
             ...(selectedAlias ? { alias: selectedAlias } : {}),
             ...gw,
           })
@@ -316,6 +326,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
           amount: parseFloat(donationAmount),
           method: methodLabel,
           paymentType: 'donation',
+          balanceApplied: balancePortionFor(parseFloat(donationAmount)),
           ...(selectedAlias ? { alias: selectedAlias } : {}),
           ...gw,
         })
@@ -330,7 +341,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
     setSuccessMessage('Payment processed successfully!')
     setPaySuccess(true)
     setPaying(false)
-    if (refreshData) refreshData()
+    if (refreshData) await refreshData()
     setTimeout(() => setPaySuccess(false), 3000)
   }
 

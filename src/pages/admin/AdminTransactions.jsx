@@ -79,8 +79,10 @@ export default function AdminTransactions({
       pledge: 'badge-pledge',
       donation: 'badge-donation',
       purchase: 'badge-purchase',
+      deposit: 'badge-membership', // re-use membership styling for now
     }[type] || 'badge-pending'
-    return <span className={`badge ${cls}`}>{type ? type.charAt(0).toUpperCase() + type.slice(1) : 'Unknown'}</span>
+    const label = type === 'deposit' ? 'Account Credit' : (type ? type.charAt(0).toUpperCase() + type.slice(1) : 'Unknown')
+    return <span className={`badge ${cls}`}>{label}</span>
   }
 
   // Merge all transactions from all members + admin transactions
@@ -255,6 +257,7 @@ export default function AdminTransactions({
         </div>
         <select className="admin-filter-select" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
           <option value="all">All Types</option>
+          <option value="deposit">Account Credit</option>
           <option value="membership">Membership</option>
           <option value="pledge">Pledge</option>
           <option value="donation">Donation</option>

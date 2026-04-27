@@ -119,8 +119,10 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
       pledge: 'badge-pledge',
       donation: 'badge-donation',
       purchase: 'badge-purchase',
+      deposit: 'badge-membership',
     }[type] || 'badge-pending'
-    return <span className={`badge ${cls}`}>{type ? type.charAt(0).toUpperCase() + type.slice(1) : '—'}</span>
+    const label = type === 'deposit' ? 'Account Credit' : (type ? type.charAt(0).toUpperCase() + type.slice(1) : '—')
+    return <span className={`badge ${cls}`}>{label}</span>
   }
 
   return (
@@ -192,6 +194,7 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
           <div style={{ display: 'flex', gap: '0.5rem', margin: '0.75rem 0', flexWrap: 'wrap' }}>
             {[
               { key: 'all', label: 'All Types' },
+              { key: 'deposit', label: 'Account Credit' },
               { key: 'membership', label: 'Membership' },
               { key: 'pledge', label: 'Pledge' },
               { key: 'donation', label: 'Donation' },

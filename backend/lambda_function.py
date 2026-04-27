@@ -372,6 +372,11 @@ def create_transaction(body):
     member_id = body['memberId']
     date = body.get('date', '')
     txn_id = f"TXN#{date}#{uuid.uuid4().hex[:8]}"
+    payment_type = body.get('paymentType', '')
+    amount = Decimal(str(body.get('amount', 0)))
+    # Optional: how much of THIS payment came out of the member's stored balance/credit.
+    # The frontend passes this when a payment is funded (fully or partially) by Account Credit.
+    balance_applied = Decimal(str(body.get('balanceApplied', 0)))
 
     item = {
         'memberId': member_id,
@@ -380,9 +385,9 @@ def create_transaction(body):
         'txnDate': date,
         'yearMonth': date[:7] if date else '',
         'description': body.get('description', ''),
-        'amount': Decimal(str(body.get('amount', 0))),
+        'amount': amount,
         'method': body.get('method', ''),
-        'paymentType': body.get('paymentType', ''),
+        'paymentType': payment_type,
         'source': body.get('source', ''),
         'category': body.get('category', ''),
         'groupId': body.get('groupId', ''),
@@ -397,6 +402,7 @@ def create_transaction(body):
         'gatewayAuthCode': body.get('gatewayAuthCode', ''),
         'gatewayResult': body.get('gatewayResult', ''),
         'gatewayStatus': body.get('gatewayStatus', ''),
+        'balanceApplied': balance_applied if balance_applied > 0 else '',
     }
     # Clean empty strings
     item = {k: v for k, v in item.items() if v != '' or k in ('memberId', 'transactionId', 'date')}
@@ -407,7 +413,30 @@ def create_transaction(body):
     if body.get('pledgeId') and body.get('paymentType') == 'pledge':
         _apply_pledge_payment(member_id, body['pledgeId'], Decimal(str(body.get('amount', 0))), body.get('method', ''))
 
+    # Update the member's stored balance/credit:
+    #   - Deposits add the full amount
+    #   - Any other transaction with balanceApplied > 0 deducts that portion
+    delta = Decimal('0')
+    if payment_type == 'deposit':
+        delta += amount
+    if balance_applied > 0:
+        delta -= balance_applied
+    if delta != 0:
+        _adjust_member_balance(member_id, delta)
+
     return respond(201, item)
+
+
+def _adjust_member_balance(member_id, delta):
+    """Atomically add `delta` (Decimal, can be negative) to a member's stored balance."""
+    try:
+        members_table.update_item(
+            Key={'memberId': str(member_id)},
+            UpdateExpression='SET balance = if_not_exists(balance, :zero) + :d',
+            ExpressionAttributeValues={':zero': Decimal('0'), ':d': delta},
+        )
+    except Exception as e:
+        print(f"[balance] failed to adjust member {member_id} by {delta}: {e}")
 
 
 def update_transaction(body):
@@ -591,7 +620,14 @@ def pay_pledge(body):
         v = body.get(k, '')
         if v:
             txn[k] = v
+    balance_applied = Decimal(str(body.get('balanceApplied', 0)))
+    if balance_applied > 0:
+        txn['balanceApplied'] = balance_applied
     transactions_table.put_item(Item=txn)
+
+    # If this pledge payment was funded (in part) by stored balance, deduct it
+    if balance_applied > 0:
+        _adjust_member_balance(member_id, -balance_applied)
 
     return respond(200, {'message': 'Payment recorded', 'pledge': {'paidAmount': new_paid, 'paid': is_fully_paid}, 'transaction': txn})
 

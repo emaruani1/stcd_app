@@ -170,6 +170,7 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
         method: methodLabel,
         paymentType: 'donation',
         category: sponsorType === 'kiddush' ? 'Kiddush' : 'Seuda Shelishit',
+        balanceApplied: balancePortionUsed > 0 ? balancePortionUsed : 0,
         ...gw,
       })
     } catch (e) { console.error(e) }
@@ -187,7 +188,7 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
     setSelectedDate(null)
     setPaying(false)
     setTimeout(() => setPaySuccess(false), 3000)
-    if (refreshData) refreshData()
+    if (refreshData) await refreshData()
   }
 
   const formatDate = (dateStr) => {
