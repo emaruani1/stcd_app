@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import * as api from '../../api'
+import MemberSearchSelect from '../../components/MemberSearchSelect'
 
 export default function AdminPledges({
   allMembers, setAllMembers,
@@ -70,7 +71,13 @@ export default function AdminPledges({
     if (statusFilter === 'unpaid' && (p.paid || p.canceled)) return false
     if (statusFilter === 'paid' && !p.paid) return false
     if (statusFilter === 'canceled' && !p.canceled) return false
-    if (search && !`${p.description} ${p.memberName}`.toLowerCase().includes(search.toLowerCase())) return false
+    if (search) {
+      const q = search.toLowerCase()
+      const member = allMembers.find(m => String(m.id) === String(p.memberId))
+      const aliasStr = member ? (member.aliases || []).join(' ').toLowerCase() : ''
+      const email = member ? (member.email || '').toLowerCase() : ''
+      if (!`${p.description} ${p.memberName}`.toLowerCase().includes(q) && !email.includes(q) && !aliasStr.includes(q)) return false
+    }
     return true
   }).sort((a, b) => new Date(b.date) - new Date(a.date))
 
@@ -236,20 +243,18 @@ export default function AdminPledges({
         <input
           type="text"
           className="admin-search-input"
-          placeholder="Search..."
+          placeholder="Search by name, email, alias, or description..."
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <select
-          className="admin-filter-select"
-          value={memberFilter}
-          onChange={e => setMemberFilter(e.target.value)}
-        >
-          <option value="all">All Members</option>
-          {allMembers.map(m => (
-            <option key={m.id} value={m.id}>{m.firstName} {m.lastName}</option>
-          ))}
-        </select>
+        <div style={{ minWidth: '250px' }}>
+          <MemberSearchSelect
+            allMembers={allMembers}
+            value={memberFilter === 'all' ? '' : memberFilter}
+            onChange={v => setMemberFilter(v || 'all')}
+            placeholder="Filter by member..."
+          />
+        </div>
         <select
           className="admin-filter-select"
           value={statusFilter}
@@ -344,15 +349,12 @@ export default function AdminPledges({
             <div className="modal-body">
               <div className="form-group">
                 <label>Member</label>
-                <select
+                <MemberSearchSelect
+                  allMembers={allMembers}
                   value={newPledge.memberId}
-                  onChange={e => setNewPledge(prev => ({ ...prev, memberId: e.target.value }))}
-                >
-                  <option value="">Select member...</option>
-                  {allMembers.map(m => (
-                    <option key={m.id} value={m.id}>{m.firstName} {m.lastName}</option>
-                  ))}
-                </select>
+                  onChange={v => setNewPledge(prev => ({ ...prev, memberId: v }))}
+                  placeholder="Search by name, email, or alias..."
+                />
               </div>
               <div className="form-group">
                 <label>Occasion</label>
@@ -491,12 +493,12 @@ export default function AdminPledges({
             <div className="modal-body">
               <div className="form-group">
                 <label>Member</label>
-                <select value={newTxn.memberId} onChange={e => setNewTxn(prev => ({ ...prev, memberId: e.target.value }))}>
-                  <option value="">Select member...</option>
-                  {allMembers.map(m => (
-                    <option key={m.id} value={m.id}>{m.firstName} {m.lastName}</option>
-                  ))}
-                </select>
+                <MemberSearchSelect
+                  allMembers={allMembers}
+                  value={newTxn.memberId}
+                  onChange={v => setNewTxn(prev => ({ ...prev, memberId: v }))}
+                  placeholder="Search by name, email, or alias..."
+                />
               </div>
               <div className="form-group">
                 <label>Type</label>

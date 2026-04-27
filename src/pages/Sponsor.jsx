@@ -1,6 +1,7 @@
-import { useState, useMemo } from 'react'
+import { useRef, useState, useMemo } from 'react'
 import { sponsorshipCalendar } from '../data/fakeData'
 import * as api from '../api'
+import PaymentChooser from '../components/PaymentChooser'
 
 export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPayments, setExtraPayments, blockedDatesState = [], currentBalance, setMemberBalances, currentMemberId, kiddushPricing, seudaPricing, refreshData }) {
   const kiddushOptions = kiddushPricing || []
@@ -12,6 +13,9 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
   const [showPayModal, setShowPayModal] = useState(false)
   const [paySuccess, setPaySuccess] = useState(false)
   const [paymentSource, setPaymentSource] = useState('card')
+  const [paying, setPaying] = useState(false)
+  const [payError, setPayError] = useState('')
+  const chooserRef = useRef(null)
   const [calMonth, setCalMonth] = useState(() => {
     const d = new Date()
     return { year: d.getFullYear(), month: d.getMonth() }
@@ -106,8 +110,37 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
     const key = `${sponsorType}-${selectedDate.date}`
     const methodLabel = getPaymentMethodLabel()
     const now = new Date().toISOString().split('T')[0]
+    setPaying(true)
+    setPayError('')
 
-    // Deduct from balance if applicable
+    // 1) Charge the card portion first
+    let gw = {}
+    if (cardPortion > 0) {
+      try {
+        const res = await chooserRef.current.charge({
+          amount: cardPortion,
+          paymentType: 'donation',
+          description: `${selectedOption.label} sponsorship — ${formatDate(selectedDate.date)}`,
+          category: sponsorType === 'kiddush' ? 'Kiddush' : 'Seuda Shelishit',
+          skipRecord: true, // recorded below as a donation transaction with gateway fields
+        })
+        gw = {
+          gatewayRefNum: res.gatewayRefNum,
+          gatewayAuthCode: res.authCode,
+          gatewayResult: 'A',
+          gatewayStatus: 'Approved',
+          cardLast4: res.last4,
+          cardBrand: res.cardBrand,
+          paymentMethodId: res.paymentMethodId || '',
+        }
+      } catch (e) {
+        setPayError(e.message || 'Charge failed')
+        setPaying(false)
+        return
+      }
+    }
+
+    // 2) Deduct from balance if applicable
     if (balancePortionUsed > 0) {
       setMemberBalances(prev => ({
         ...prev,
@@ -115,7 +148,7 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
       }))
     }
 
-    // Save sponsorship to API
+    // 3) Save sponsorship
     try {
       await api.updateSponsorship(selectedDate.date, {
         [sponsorType]: {
@@ -127,7 +160,7 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
       })
     } catch (e) { console.error(e) }
 
-    // Create donation transaction for the sponsorship
+    // 4) Record the ledger transaction with full gateway metadata
     try {
       await api.createTransaction({
         memberId: String(currentMemberId),
@@ -137,6 +170,7 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
         method: methodLabel,
         paymentType: 'donation',
         category: sponsorType === 'kiddush' ? 'Kiddush' : 'Seuda Shelishit',
+        ...gw,
       })
     } catch (e) { console.error(e) }
 
@@ -151,6 +185,7 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
     setShowPayModal(false)
     setPaySuccess(true)
     setSelectedDate(null)
+    setPaying(false)
     setTimeout(() => setPaySuccess(false), 3000)
     if (refreshData) refreshData()
   }
@@ -439,31 +474,31 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
                 </div>
               )}
 
-              {showCardForm && (
-                <div className="modal-payment-form">
-                  <div className="form-group">
-                    <label>Card Number</label>
-                    <input type="text" placeholder="4242 4242 4242 4242" maxLength="19" />
-                  </div>
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label>Expiry</label>
-                      <input type="text" placeholder="MM/YY" maxLength="5" />
-                    </div>
-                    <div className="form-group">
-                      <label>CVV</label>
-                      <input type="text" placeholder="123" maxLength="4" />
-                    </div>
-                  </div>
-                  <div className="form-group">
-                    <label>Name on Card</label>
-                    <input type="text" placeholder="David Cohen" />
-                  </div>
+              {showCardForm && cardPortion > 0 && (
+                <div className="modal-payment-form" style={{ padding: 16, background: '#fafafa', borderRadius: 12 }}>
+                  <PaymentChooser
+                    ref={chooserRef}
+                    memberId={String(currentMemberId)}
+                    amount={cardPortion}
+                  />
                 </div>
               )}
 
-              <button className="pay-btn modal-pay-btn" onClick={confirmPayment}>
-                Confirm &amp; Pay ${selectedOption.price}
+              {payError && (
+                <div style={{
+                  background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b',
+                  padding: 10, borderRadius: 8, marginTop: 12, fontSize: 13,
+                }}>
+                  {payError}
+                </div>
+              )}
+
+              <button
+                className="pay-btn modal-pay-btn"
+                onClick={confirmPayment}
+                disabled={paying}
+              >
+                {paying ? 'Processing…' : `Confirm & Pay $${selectedOption.price}`}
               </button>
             </div>
           </div>

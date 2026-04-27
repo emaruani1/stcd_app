@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import * as api from '../../api'
 
@@ -27,6 +27,12 @@ export default function AdminMemberEdit({ allMembers, refreshData }) {
   const [originalForm, setOriginalForm] = useState(null)
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // Cognito user state
+  const [cognitoUser, setCognitoUser] = useState(null) // null=loading, {found:false}, or user object
+  const [cognitoLoading, setCognitoLoading] = useState(false)
+  const [cognitoAction, setCognitoAction] = useState('') // 'creating', 'disabling', etc.
+  const [newUserRole, setNewUserRole] = useState('member') // role for new user creation
 
   useEffect(() => {
     if (member) {
@@ -65,6 +71,96 @@ export default function AdminMemberEdit({ allMembers, refreshData }) {
       setOriginalForm(JSON.parse(JSON.stringify(initial)))
     }
   }, [member])
+
+  // Look up Cognito user by member email
+  const lookupCognitoUser = useCallback(async () => {
+    if (!member?.email) {
+      setCognitoUser({ found: false, noEmail: true })
+      return
+    }
+    setCognitoLoading(true)
+    try {
+      const result = await api.lookupUser(member.email)
+      setCognitoUser(result)
+    } catch {
+      setCognitoUser({ found: false, error: true })
+    } finally {
+      setCognitoLoading(false)
+    }
+  }, [member?.email])
+
+  useEffect(() => {
+    if (member) lookupCognitoUser()
+  }, [member, lookupCognitoUser])
+
+  const handleCreateUser = async () => {
+    if (!member?.email) return
+    setCognitoAction('creating')
+    try {
+      await api.createUser({ email: member.email, role: newUserRole, memberId: String(member.id) })
+      setToast('User account created — temporary password sent via email')
+      lookupCognitoUser()
+    } catch (err) {
+      setToast('Error: ' + err.message)
+    } finally {
+      setCognitoAction('')
+    }
+  }
+
+  const handleDisableUser = async () => {
+    if (!member?.email || !confirm('Disable this user account? They will not be able to log in.')) return
+    setCognitoAction('disabling')
+    try {
+      await api.disableUser(member.email)
+      setToast('User account disabled')
+      lookupCognitoUser()
+    } catch (err) {
+      setToast('Error: ' + err.message)
+    } finally {
+      setCognitoAction('')
+    }
+  }
+
+  const handleEnableUser = async () => {
+    if (!member?.email) return
+    setCognitoAction('enabling')
+    try {
+      await api.enableUser(member.email)
+      setToast('User account enabled')
+      lookupCognitoUser()
+    } catch (err) {
+      setToast('Error: ' + err.message)
+    } finally {
+      setCognitoAction('')
+    }
+  }
+
+  const handleResetPassword = async () => {
+    if (!member?.email || !confirm('Send a password reset email to this user?')) return
+    setCognitoAction('resetting')
+    try {
+      await api.resetUserPassword(member.email)
+      setToast('Password reset email sent')
+    } catch (err) {
+      setToast('Error: ' + err.message)
+    } finally {
+      setCognitoAction('')
+    }
+  }
+
+  const handleRoleChange = async (newRole) => {
+    if (!member?.email) return
+    setCognitoAction('updatingRole')
+    try {
+      await api.updateUserRole(member.email, newRole)
+      setToast(`Role updated to ${newRole}`)
+      lookupCognitoUser()
+    } catch (err) {
+      setToast('Error: ' + err.message)
+    } finally {
+      setCognitoAction('')
+    }
+  }
 
   if (!member) {
     return (
@@ -213,6 +309,161 @@ export default function AdminMemberEdit({ allMembers, refreshData }) {
       </div>
 
       {toast && <div className="success-toast">{toast}</div>}
+
+      {/* Duplicate email warning */}
+      {member.email && (() => {
+        const dupes = allMembers.filter(other => other.id !== member.id && other.email && other.email.toLowerCase() === member.email.toLowerCase())
+        return dupes.length > 0 ? (
+          <div style={{
+            background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 'var(--radius-sm)',
+            padding: '12px 16px', marginBottom: '1rem', fontSize: '0.9rem', color: '#856404',
+          }}>
+            <strong>Duplicate email detected:</strong> {member.email} is also used by{' '}
+            {dupes.map((d, i) => (
+              <span key={d.id}>
+                {i > 0 && ', '}
+                <strong>{d.firstName} {d.lastName}</strong> (ID: {d.memberId || d.id})
+              </span>
+            ))}
+            {' '}&mdash;{' '}
+            <button
+              onClick={() => navigate(`/admin/merge?member=${member.id}`)}
+              style={{
+                background: 'none', border: 'none', color: '#856404', cursor: 'pointer',
+                textDecoration: 'underline', fontWeight: 600, padding: 0, fontSize: 'inherit',
+              }}
+            >
+              Merge accounts
+            </button>
+          </div>
+        ) : null
+      })()}
+
+      {/* User Account (Cognito) */}
+      <div className="profile-section">
+        <h2 className="profile-section-title">User Account</h2>
+        {cognitoLoading ? (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Loading user info...</p>
+        ) : cognitoUser?.noEmail ? (
+          <div style={{
+            background: 'var(--bg-warm)', borderRadius: 'var(--radius-sm)',
+            padding: '16px 20px', fontSize: '0.9rem', color: 'var(--text-muted)',
+          }}>
+            <strong>No email on file.</strong> Add an email address to this member before creating a login account.
+          </div>
+        ) : cognitoUser?.found === false ? (
+          <div style={{
+            background: 'var(--bg-warm)', borderRadius: 'var(--radius-sm)',
+            padding: '16px 20px', fontSize: '0.9rem',
+          }}>
+            <div style={{ marginBottom: '12px', color: 'var(--text-muted)' }}>
+              <strong>No login account linked.</strong> This member ({member.email}) does not have a user account for the portal.
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '8px' }}>
+              <div className="form-group" style={{ margin: 0, minWidth: '140px' }}>
+                <label style={{ fontSize: '0.82rem' }}>Role</label>
+                <select value={newUserRole} onChange={e => setNewUserRole(e.target.value)}>
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <button
+                className="pay-btn"
+                style={{ padding: '8px 20px', fontSize: '0.85rem', alignSelf: 'flex-end' }}
+                onClick={handleCreateUser}
+                disabled={!!cognitoAction}
+              >
+                {cognitoAction === 'creating' ? 'Creating...' : 'Create Login Account'}
+              </button>
+            </div>
+            <p style={{ marginTop: '4px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              A temporary password will be sent to {member.email}. The member will be prompted to set a new password on first login.
+            </p>
+          </div>
+        ) : cognitoUser?.found ? (
+          <div>
+            <div className="profile-form-grid">
+              <div className="form-group">
+                <label>Login Email</label>
+                <input type="text" value={cognitoUser.email} readOnly style={{ background: 'var(--bg-warm)' }} />
+              </div>
+              <div className="form-group">
+                <label>Account Status</label>
+                <div style={{ padding: '8px 0' }}>
+                  <span className={`badge ${cognitoUser.enabled ? 'badge-active' : 'badge-canceled'}`} style={{ fontSize: '0.85rem' }}>
+                    {cognitoUser.enabled ? 'Active' : 'Disabled'}
+                  </span>
+                  {' '}
+                  <span className={`badge ${
+                    cognitoUser.status === 'CONFIRMED' ? 'badge-paid' :
+                    cognitoUser.status === 'FORCE_CHANGE_PASSWORD' ? 'badge-pending' :
+                    'badge-pending'
+                  }`} style={{ fontSize: '0.85rem' }}>
+                    {cognitoUser.status === 'CONFIRMED' ? 'Confirmed' :
+                     cognitoUser.status === 'FORCE_CHANGE_PASSWORD' ? 'Pending Password Change' :
+                     cognitoUser.status === 'RESET_REQUIRED' ? 'Reset Required' :
+                     cognitoUser.status}
+                  </span>
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Role</label>
+                <select
+                  value={cognitoUser.role || 'member'}
+                  onChange={e => handleRoleChange(e.target.value)}
+                  disabled={!!cognitoAction}
+                >
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Linked Member ID</label>
+                <input type="text" value={cognitoUser.memberId || '—'} readOnly style={{ background: 'var(--bg-warm)' }} />
+              </div>
+              <div className="form-group">
+                <label>Created</label>
+                <input type="text" value={new Date(cognitoUser.created).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} readOnly style={{ background: 'var(--bg-warm)' }} />
+              </div>
+              <div className="form-group">
+                <label>Email Verified</label>
+                <input type="text" value={cognitoUser.emailVerified === 'true' ? 'Yes' : 'No'} readOnly style={{ background: 'var(--bg-warm)' }} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+              <button
+                className="modal-btn-secondary"
+                style={{ padding: '8px 18px' }}
+                onClick={handleResetPassword}
+                disabled={!!cognitoAction}
+              >
+                {cognitoAction === 'resetting' ? 'Sending...' : 'Reset Password'}
+              </button>
+              {cognitoUser.enabled ? (
+                <button
+                  className="modal-btn-secondary"
+                  style={{ padding: '8px 18px', color: 'var(--danger, #dc3545)', borderColor: 'var(--danger, #dc3545)' }}
+                  onClick={handleDisableUser}
+                  disabled={!!cognitoAction}
+                >
+                  {cognitoAction === 'disabling' ? 'Disabling...' : 'Disable Account'}
+                </button>
+              ) : (
+                <button
+                  className="pay-btn"
+                  style={{ padding: '8px 18px', fontSize: '0.85rem' }}
+                  onClick={handleEnableUser}
+                  disabled={!!cognitoAction}
+                >
+                  {cognitoAction === 'enabling' ? 'Enabling...' : 'Enable Account'}
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Unable to check user account status.</p>
+        )}
+      </div>
 
       {/* Personal Info */}
       <div className="profile-section">

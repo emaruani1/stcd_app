@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { sponsorshipCalendar } from '../../data/fakeData'
 import * as api from '../../api'
+import MemberSearchSelect from '../../components/MemberSearchSelect'
 
 export default function AdminSponsorship({ allMembers, bookedSponsors, setBookedSponsors, blockedDatesState, setBlockedDatesState, kiddushPricing, seudaPricing, refreshData }) {
   const kiddushOptions = kiddushPricing || []
@@ -380,12 +381,12 @@ export default function AdminSponsorship({ allMembers, bookedSponsors, setBooked
               <p className="modal-desc">{formatDate(selectedDate.date)}</p>
               <div className="form-group">
                 <label>Member</label>
-                <select value={reserveMember} onChange={e => setReserveMember(e.target.value)}>
-                  <option value="">Select member...</option>
-                  {allMembers.map(m => (
-                    <option key={m.id} value={m.id}>{m.firstName} {m.lastName}</option>
-                  ))}
-                </select>
+                <MemberSearchSelect
+                  allMembers={allMembers}
+                  value={reserveMember}
+                  onChange={v => setReserveMember(v)}
+                  placeholder="Search by name, email, or alias..."
+                />
               </div>
               <div className="form-group">
                 <label>Type</label>

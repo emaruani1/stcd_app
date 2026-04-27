@@ -40,11 +40,17 @@ export const emailTemplates = {
   },
 };
 
-// ========== SPONSORSHIP CALENDAR (local until API supports it) ==========
-function getSaturdays(startDate, count) {
+// ========== SPONSORSHIP CALENDAR ==========
+// The calendar is just a list of *upcoming Saturdays* — it carries no booking data
+// itself. Actual sponsorship records (kiddush / seuda) come from the API
+// (stcd_sponsorships table) and are merged in by the Sponsor / AdminSponsorship pages.
+function getUpcomingSaturdays(count = 52, fromDate = new Date()) {
   const saturdays = [];
-  const d = new Date(startDate + 'T00:00:00');
-  d.setDate(d.getDate() + ((6 - d.getDay() + 7) % 7));
+  const d = new Date(fromDate);
+  d.setHours(0, 0, 0, 0);
+  // Roll forward to the next Saturday (today if today is Saturday)
+  const offset = (6 - d.getDay() + 7) % 7;
+  d.setDate(d.getDate() + offset);
   for (let i = 0; i < count; i++) {
     saturdays.push(new Date(d));
     d.setDate(d.getDate() + 7);
@@ -52,13 +58,8 @@ function getSaturdays(startDate, count) {
   return saturdays;
 }
 
-const saturdays = getSaturdays('2026-02-01', 26);
-
-export const sponsorshipCalendar = saturdays.map(sat => {
-  const dateStr = sat.toISOString().split('T')[0];
-  return {
-    date: dateStr,
-    kiddush: null,
-    seuda: null,
-  };
-});
+export const sponsorshipCalendar = getUpcomingSaturdays(52).map(sat => ({
+  date: sat.toISOString().split('T')[0],
+  kiddush: null,
+  seuda: null,
+}));

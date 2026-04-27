@@ -13,6 +13,7 @@ export default function Layout({ children, onLogout, userRole, currentMember }) 
     { path: '/profile', label: 'Profile', icon: '👤' },
     { path: '/history', label: 'Payment History', icon: '📜' },
     { path: '/pay', label: 'Make Payment', icon: '💳' },
+    { path: '/cards', label: 'Saved Cards', icon: '💼' },
     { path: '/sponsor', label: 'Sponsor', icon: '🕍' },
     { path: '/statements', label: 'Statements', icon: '📄' },
   ]

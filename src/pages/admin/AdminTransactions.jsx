@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import * as api from '../../api'
+import MemberSearchSelect from '../../components/MemberSearchSelect'
 
 export default function AdminTransactions({
   allMembers, setAllMembers,
@@ -10,10 +11,43 @@ export default function AdminTransactions({
   const [search, setSearch] = useState('')
   const [memberFilter, setMemberFilter] = useState('all')
   const [typeFilter, setTypeFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
   const [showAddModal, setShowAddModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [editTarget, setEditTarget] = useState(null)
   const [toast, setToast] = useState('')
+
+  // Bucket a row by gateway result. Rows from /charge carry gatewayResult ('A'|'D'|'E').
+  // Rows from manual /transactions entries don't have it — they're treated as 'recorded'.
+  const deriveStatus = (t) => {
+    const r = (t.gatewayResult || '').toUpperCase()
+    if (r === 'A') return 'approved'
+    if (r === 'D') return 'declined'
+    if (r === 'E') return 'error'
+    return 'recorded'
+  }
+
+  const statusBadge = (status) => {
+    const styles = {
+      approved: { bg: '#dcfce7', fg: '#166534', label: 'Approved' },
+      declined: { bg: '#fee2e2', fg: '#991b1b', label: 'Declined' },
+      error:    { bg: '#fef3c7', fg: '#92400e', label: 'Error' },
+      recorded: { bg: '#e5e7eb', fg: '#374151', label: 'Recorded' },
+    }[status] || { bg: '#e5e7eb', fg: '#374151', label: status }
+    return (
+      <span style={{
+        display: 'inline-block',
+        padding: '2px 8px',
+        borderRadius: 999,
+        background: styles.bg,
+        color: styles.fg,
+        fontSize: 11,
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        letterSpacing: '.04em',
+      }}>{styles.label}</span>
+    )
+  }
 
   // New transaction form
   const [newTxn, setNewTxn] = useState({
@@ -26,6 +60,7 @@ export default function AdminTransactions({
     productId: '',
     pledgeId: '',
     applyToCredit: false,
+    alias: '',
   })
 
   const showToast = (msg) => {
@@ -77,9 +112,26 @@ export default function AdminTransactions({
   const filtered = allTransactions.filter(t => {
     if (memberFilter !== 'all' && String(t.memberId) !== String(memberFilter)) return false
     if (typeFilter !== 'all' && t.paymentType !== typeFilter) return false
-    if (search && !`${t.description} ${t.memberName}`.toLowerCase().includes(search.toLowerCase())) return false
+    if (statusFilter !== 'all' && deriveStatus(t) !== statusFilter) return false
+    if (search) {
+      const q = search.toLowerCase()
+      const member = allMembers.find(m => String(m.id) === String(t.memberId))
+      const aliasStr = member ? (member.aliases || []).join(' ').toLowerCase() : ''
+      const email = member ? (member.email || '').toLowerCase() : ''
+      if (!`${t.description} ${t.memberName}`.toLowerCase().includes(q) && !email.includes(q) && !aliasStr.includes(q)) return false
+    }
     return true
   })
+
+  // Counts for the status strip — based on the full transaction list (no filters)
+  const statusCounts = useMemo(() => {
+    const c = { all: allTransactions.length, approved: 0, declined: 0, error: 0, recorded: 0 }
+    for (const t of allTransactions) {
+      const s = deriveStatus(t)
+      c[s] = (c[s] || 0) + 1
+    }
+    return c
+  }, [allTransactions])
 
   const handleAddTransaction = async () => {
     if (!newTxn.memberId || !newTxn.amount) return
@@ -105,6 +157,7 @@ export default function AdminTransactions({
         paymentType: newTxn.paymentType,
         pledgeId: newTxn.pledgeId || '',
         productId: newTxn.productId || '',
+        ...(newTxn.alias ? { alias: newTxn.alias } : {}),
       })
 
       // Apply to member credit if checked
@@ -117,7 +170,7 @@ export default function AdminTransactions({
       setShowAddModal(false)
       setNewTxn({
         memberId: '', paymentType: 'donation', amount: '', method: paymentMethods[0]?.label || 'Cash',
-        description: '', date: new Date().toISOString().split('T')[0], productId: '', pledgeId: '', applyToCredit: false,
+        description: '', date: new Date().toISOString().split('T')[0], productId: '', pledgeId: '', applyToCredit: false, alias: '',
       })
       showToast(newTxn.applyToCredit ? 'Transaction created & credit applied' : 'Transaction created')
       if (refreshData) refreshData()
@@ -142,6 +195,7 @@ export default function AdminTransactions({
         method: editTarget.method,
         paymentType: editTarget.paymentType,
         date: editTarget.date,
+        alias: editTarget.alias || '',
       })
       setShowEditModal(false)
       setEditTarget(null)
@@ -167,6 +221,7 @@ export default function AdminTransactions({
   }
 
   const selectedMemberForAdd = allMembers.find(m => String(m.id) === String(newTxn.memberId))
+  const selectedMemberAliases = selectedMemberForAdd?.aliases || []
   const unpaidPledges = selectedMemberForAdd
     ? selectedMemberForAdd.pledges.filter(p => !p.paid && !p.canceled && p.category === 'pledge')
     : []
@@ -186,16 +241,18 @@ export default function AdminTransactions({
         <input
           type="text"
           className="admin-search-input"
-          placeholder="Search..."
+          placeholder="Search by name, email, alias, or description..."
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <select className="admin-filter-select" value={memberFilter} onChange={e => setMemberFilter(e.target.value)}>
-          <option value="all">All Members</option>
-          {allMembers.map(m => (
-            <option key={m.id} value={m.id}>{m.firstName} {m.lastName}</option>
-          ))}
-        </select>
+        <div style={{ minWidth: '250px' }}>
+          <MemberSearchSelect
+            allMembers={allMembers}
+            value={memberFilter === 'all' ? '' : memberFilter}
+            onChange={v => setMemberFilter(v || 'all')}
+            placeholder="Filter by member..."
+          />
+        </div>
         <select className="admin-filter-select" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
           <option value="all">All Types</option>
           <option value="membership">Membership</option>
@@ -203,9 +260,43 @@ export default function AdminTransactions({
           <option value="donation">Donation</option>
           <option value="purchase">Purchase</option>
         </select>
+        <select className="admin-filter-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+          <option value="all">All Statuses</option>
+          <option value="approved">Approved only</option>
+          <option value="declined">Declined only</option>
+          <option value="error">Errors only</option>
+          <option value="recorded">Recorded (manual / cash / check)</option>
+        </select>
         <button className="pay-btn" style={{ padding: '10px 20px', fontSize: '0.85rem' }} onClick={() => setShowAddModal(true)}>
           + Add Transaction
         </button>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+        {[
+          { k: 'all',      label: 'All',       fg: '#374151', bg: '#e5e7eb' },
+          { k: 'approved', label: 'Approved',  fg: '#166534', bg: '#dcfce7' },
+          { k: 'declined', label: 'Declined',  fg: '#991b1b', bg: '#fee2e2' },
+          { k: 'error',    label: 'Errors',    fg: '#92400e', bg: '#fef3c7' },
+          { k: 'recorded', label: 'Recorded',  fg: '#374151', bg: '#e5e7eb' },
+        ].map(s => (
+          <button
+            key={s.k}
+            onClick={() => setStatusFilter(s.k)}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 999,
+              border: statusFilter === s.k ? `2px solid ${s.fg}` : '1px solid #e5e7eb',
+              background: s.bg,
+              color: s.fg,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            {s.label} <span style={{ opacity: 0.7 }}>({statusCounts[s.k] || 0})</span>
+          </button>
+        ))}
       </div>
 
       <div className="dashboard-section">
@@ -216,34 +307,63 @@ export default function AdminTransactions({
                 <th>Member</th>
                 <th>Date</th>
                 <th>Description</th>
+                <th>Alias</th>
                 <th>Product</th>
                 <th>Type</th>
                 <th>Amount</th>
                 <th>Method</th>
+                <th>Status</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan="8" className="empty-row">No transactions found</td></tr>
+                <tr><td colSpan="10" className="empty-row">No transactions found</td></tr>
               ) : (
-                filtered.map((t, idx) => (
-                  <tr key={`${t.source}-${t.id}-${idx}`}>
-                    <td><strong>{t.memberName}</strong></td>
-                    <td>{formatDate(t.date)}</td>
-                    <td>{t.description}</td>
-                    <td style={{ fontSize: '0.82rem' }}>{t.productName || t.productId || '—'}</td>
-                    <td>{paymentTypeBadge(t.paymentType)}</td>
-                    <td className="amount-cell">${(t.amount || 0).toLocaleString()}</td>
-                    <td>{t.method}</td>
-                    <td>
-                      <div className="action-btns">
-                        <button className="action-btn action-btn-pay" onClick={() => handleStartEdit(t)}>Edit</button>
-                        <button className="action-btn action-btn-delete" onClick={() => handleDelete(t)}>Delete</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                filtered.map((t, idx) => {
+                  const status = deriveStatus(t)
+                  const rowStyle = status === 'declined'
+                    ? { background: '#fef2f2' }
+                    : status === 'error'
+                    ? { background: '#fffbeb' }
+                    : undefined
+                  const cardSuffix = t.cardLast4 ? ` •••• ${t.cardLast4}` : ''
+                  return (
+                    <tr key={`${t.source}-${t.id}-${idx}`} style={rowStyle}>
+                      <td><strong>{t.memberName}</strong></td>
+                      <td>{formatDate(t.date)}</td>
+                      <td>
+                        {t.description}
+                        {(t.gatewayError || t.gatewayErrorCode) && (
+                          <div style={{ fontSize: '0.72rem', color: '#991b1b', marginTop: 2 }}>
+                            {t.gatewayError}{t.gatewayErrorCode ? ` (${t.gatewayErrorCode})` : ''}
+                          </div>
+                        )}
+                        {t.gatewayRefNum && (
+                          <div style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: 2 }}>
+                            ref {t.gatewayRefNum}
+                            {t.gatewayAuthCode ? ` · auth ${t.gatewayAuthCode}` : ''}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ fontSize: '0.82rem' }}>{t.alias || '—'}</td>
+                      <td style={{ fontSize: '0.82rem' }}>{t.productName || t.productId || '—'}</td>
+                      <td>{paymentTypeBadge(t.paymentType)}</td>
+                      <td className="amount-cell">${(t.amount || 0).toLocaleString()}</td>
+                      <td>
+                        {t.method}
+                        {cardSuffix && <span style={{ color: '#6b7280', fontSize: '0.78rem' }}>{cardSuffix}</span>}
+                      </td>
+                      <td>{statusBadge(status)}</td>
+                      <td>
+                        <div className="action-btns">
+                          <button className="action-btn action-btn-pay" onClick={() => handleStartEdit(t)}>Edit</button>
+                          <button className="action-btn action-btn-delete" onClick={() => handleDelete(t)}>Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })
               )}
             </tbody>
           </table>
@@ -259,13 +379,24 @@ export default function AdminTransactions({
             <div className="modal-body">
               <div className="form-group">
                 <label>Member</label>
-                <select value={newTxn.memberId} onChange={e => setNewTxn(prev => ({ ...prev, memberId: e.target.value, pledgeId: '' }))}>
-                  <option value="">Select member...</option>
-                  {allMembers.map(m => (
-                    <option key={m.id} value={m.id}>{m.firstName} {m.lastName}</option>
-                  ))}
-                </select>
+                <MemberSearchSelect
+                  allMembers={allMembers}
+                  value={newTxn.memberId}
+                  onChange={v => setNewTxn(prev => ({ ...prev, memberId: v, pledgeId: '', alias: '' }))}
+                  placeholder="Search by name, email, or alias..."
+                />
               </div>
+              {selectedMemberAliases.length > 0 && (
+                <div className="form-group">
+                  <label>Paying As (Alias)</label>
+                  <select value={newTxn.alias} onChange={e => setNewTxn(prev => ({ ...prev, alias: e.target.value }))}>
+                    <option value="">{selectedMemberForAdd.firstName} {selectedMemberForAdd.lastName} (Primary)</option>
+                    {selectedMemberAliases.map((alias, i) => (
+                      <option key={i} value={alias}>{alias}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="form-group">
                 <label>Payment Type</label>
                 <select value={newTxn.paymentType} onChange={e => setNewTxn(prev => ({ ...prev, paymentType: e.target.value, productId: '', pledgeId: '' }))}>
@@ -416,6 +547,21 @@ export default function AdminTransactions({
                   ))}
                 </select>
               </div>
+              {(() => {
+                const editMember = allMembers.find(m => String(m.id) === String(editTarget.memberId))
+                const editAliases = editMember?.aliases || []
+                return editAliases.length > 0 ? (
+                  <div className="form-group">
+                    <label>Paying As (Alias)</label>
+                    <select value={editTarget.alias || ''} onChange={e => setEditTarget(prev => ({ ...prev, alias: e.target.value }))}>
+                      <option value="">{editMember.firstName} {editMember.lastName} (Primary)</option>
+                      {editAliases.map((alias, i) => (
+                        <option key={i} value={alias}>{alias}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null
+              })()}
               <div className="modal-actions">
                 <button className="modal-btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
                 <button className="pay-btn" style={{ padding: '10px 24px' }} onClick={handleSaveEdit}>Save Changes</button>

@@ -59,3 +59,24 @@ export const deleteSponsorship = (dateKey, data) => request(`/sponsorships/${dat
 // ===== EMAILS =====
 export const fetchEmails = () => request('/emails')
 export const createEmail = (data) => request('/emails', { method: 'POST', body: JSON.stringify(data) })
+
+// ===== PAYMENT METHODS (Sola / FideliPay card vault) =====
+export const fetchPaymentMethods = (memberId) =>
+  request(`/payment-methods/member/${memberId}`)
+export const savePaymentMethod = (data) =>
+  request('/payment-methods', { method: 'POST', body: JSON.stringify(data) })
+export const deletePaymentMethod = (data) =>
+  request('/payment-methods/' + (data.paymentMethodId || ''), {
+    method: 'DELETE',
+    body: JSON.stringify(data),
+  })
+export const chargeSavedCard = (data) =>
+  request('/charge', { method: 'POST', body: JSON.stringify(data) })
+
+// ===== COGNITO USER MANAGEMENT =====
+export const lookupUser = (email) => request('/users/lookup', { method: 'POST', body: JSON.stringify({ email }) })
+export const createUser = (data) => request('/users/create', { method: 'POST', body: JSON.stringify(data) })
+export const disableUser = (email) => request('/users/disable', { method: 'POST', body: JSON.stringify({ email }) })
+export const enableUser = (email) => request('/users/enable', { method: 'POST', body: JSON.stringify({ email }) })
+export const resetUserPassword = (email) => request('/users/reset-password', { method: 'POST', body: JSON.stringify({ email }) })
+export const updateUserRole = (email, role) => request('/users/update-role', { method: 'POST', body: JSON.stringify({ email, role }) })

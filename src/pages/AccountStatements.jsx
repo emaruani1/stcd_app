@@ -20,7 +20,10 @@ export default function AccountStatements({
   const [startDate, setStartDate] = useState(startOfMonth)
   const [endDate, setEndDate] = useState(todayStr)
   const [typeFilters, setTypeFilters] = useState(['membership', 'pledge', 'donation', 'purchase'])
+  const [aliasFilter, setAliasFilter] = useState('all')
   const [preset, setPreset] = useState('mtd')
+
+  const memberAliases = member?.aliases || []
 
   const allTransactions = useMemo(() => {
     if (!memberId) return []
@@ -68,9 +71,13 @@ export default function AccountStatements({
         const td = new Date(t.date + 'T00:00:00')
         if (td > new Date(endDate + 'T23:59:59')) return false
       }
+      if (aliasFilter !== 'all') {
+        if (aliasFilter === '__primary__') { if (t.alias) return false }
+        else { if (t.alias !== aliasFilter) return false }
+      }
       return true
     })
-  }, [allTransactions, typeFilters, startDate, endDate])
+  }, [allTransactions, typeFilters, aliasFilter, startDate, endDate])
 
   const totals = useMemo(() => {
     const t = { membership: 0, pledge: 0, donation: 0, purchase: 0, total: 0 }
@@ -107,14 +114,21 @@ export default function AccountStatements({
   }
 
   const downloadCSV = () => {
-    const headers = ['Date', 'Description', 'Type', 'Amount', 'Method']
-    const rows = filtered.map(t => [
-      t.date,
-      `"${t.description}"`,
-      t.paymentType || '',
-      t.amount.toFixed(2),
-      t.method || '',
-    ])
+    const hasAliases = memberAliases.length > 0
+    const headers = hasAliases
+      ? ['Date', 'Description', 'Paying As', 'Type', 'Amount', 'Method']
+      : ['Date', 'Description', 'Type', 'Amount', 'Method']
+    const rows = filtered.map(t => {
+      const base = [
+        t.date,
+        `"${t.description}"`,
+        ...(hasAliases ? [`"${t.alias || `${member.firstName} ${member.lastName}`}"`] : []),
+        t.paymentType || '',
+        t.amount.toFixed(2),
+        t.method || '',
+      ]
+      return base
+    })
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
@@ -159,10 +173,10 @@ export default function AccountStatements({
           <div class="summary-item">Pledges: <strong>$${totals.pledge.toLocaleString()}</strong></div>
         </div>
         <table>
-          <thead><tr><th>Date</th><th>Description</th><th>Type</th><th class="amount">Amount</th><th>Method</th></tr></thead>
+          <thead><tr><th>Date</th><th>Description</th>${memberAliases.length > 0 ? '<th>Paying As</th>' : ''}<th>Type</th><th class="amount">Amount</th><th>Method</th></tr></thead>
           <tbody>
-            ${filtered.map(t => `<tr><td>${formatDate(t.date)}</td><td>${t.description}</td><td>${t.paymentType || ''}</td><td class="amount">$${t.amount.toLocaleString()}</td><td>${t.method || ''}</td></tr>`).join('')}
-            <tr class="total-row"><td colspan="3">Total</td><td class="amount">$${totals.total.toLocaleString()}</td><td></td></tr>
+            ${filtered.map(t => `<tr><td>${formatDate(t.date)}</td><td>${t.description}</td>${memberAliases.length > 0 ? `<td>${t.alias || `${member.firstName} ${member.lastName}`}</td>` : ''}<td>${t.paymentType || ''}</td><td class="amount">$${t.amount.toLocaleString()}</td><td>${t.method || ''}</td></tr>`).join('')}
+            <tr class="total-row"><td colspan="${memberAliases.length > 0 ? 4 : 3}">Total</td><td class="amount">$${totals.total.toLocaleString()}</td><td></td></tr>
           </tbody>
         </table>
         <div class="footer">Generated on ${new Date().toLocaleDateString()}</div>
@@ -242,6 +256,22 @@ export default function AccountStatements({
             </label>
           ))}
         </div>
+        {memberAliases.length > 0 && (
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center', marginTop: '0.75rem' }}>
+            <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Paying As:</span>
+            <select
+              value={aliasFilter}
+              onChange={e => setAliasFilter(e.target.value)}
+              style={{ padding: '6px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', fontSize: '0.85rem' }}
+            >
+              <option value="all">All</option>
+              <option value="__primary__">{member.firstName} {member.lastName} (Primary)</option>
+              {memberAliases.map((a, i) => (
+                <option key={i} value={a}>{a}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Summary Cards */}
@@ -295,6 +325,7 @@ export default function AccountStatements({
               <tr>
                 <th>Date</th>
                 <th>Description</th>
+                {memberAliases.length > 0 && <th>Paying As</th>}
                 <th>Type</th>
                 <th>Amount</th>
                 <th>Method</th>
@@ -302,12 +333,13 @@ export default function AccountStatements({
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan="5" className="empty-row">No transactions found for this period</td></tr>
+                <tr><td colSpan={memberAliases.length > 0 ? 6 : 5} className="empty-row">No transactions found for this period</td></tr>
               ) : (
                 filtered.map((t, idx) => (
                   <tr key={t.id || idx}>
                     <td>{formatDate(t.date)}</td>
                     <td>{t.description}</td>
+                    {memberAliases.length > 0 && <td style={{ fontSize: '0.82rem' }}>{t.alias || `${member.firstName} ${member.lastName}`}</td>}
                     <td>{paymentTypeBadge(t.paymentType)}</td>
                     <td className="amount-cell">${t.amount.toLocaleString()}</td>
                     <td>{t.method}</td>
@@ -316,7 +348,7 @@ export default function AccountStatements({
               )}
               {filtered.length > 0 && (
                 <tr style={{ fontWeight: 600, background: 'var(--bg-warm)' }}>
-                  <td colSpan="3" style={{ textAlign: 'right' }}>Total</td>
+                  <td colSpan={memberAliases.length > 0 ? 4 : 3} style={{ textAlign: 'right' }}>Total</td>
                   <td className="amount-cell">${totals.total.toLocaleString()}</td>
                   <td></td>
                 </tr>

@@ -79,10 +79,16 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
         const nameB = `${b.lastName} ${b.firstName}`.toLowerCase()
         return nameA < nameB ? -dir : nameA > nameB ? dir : 0
       }
-      case 'email':
-        return (a.email || '').toLowerCase() < (b.email || '').toLowerCase() ? -dir : dir
-      case 'type':
-        return (a.contactType || '').toLowerCase() < (b.contactType || '').toLowerCase() ? -dir : dir
+      case 'email': {
+        const emailA = (a.email || '').toLowerCase()
+        const emailB = (b.email || '').toLowerCase()
+        return emailA < emailB ? -dir : emailA > emailB ? dir : 0
+      }
+      case 'type': {
+        const typeA = (a.contactType || '').toLowerCase()
+        const typeB = (b.contactType || '').toLowerCase()
+        return typeA < typeB ? -dir : typeA > typeB ? dir : 0
+      }
       case 'credit': {
         const balA = (memberBalances || {})[a.id] || 0
         const balB = (memberBalances || {})[b.id] || 0
@@ -273,6 +279,35 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
                               {m.spouseName && <div className="expanded-info-item"><strong>Spouse:</strong> {m.spouseName}</div>}
                               {m.children.length > 0 && <div className="expanded-info-item"><strong>Children:</strong> {m.children.map(c => c.name).join(', ')}</div>}
                             </div>
+
+                            {/* Duplicate email warning */}
+                            {m.email && (() => {
+                              const dupes = allMembers.filter(other => other.id !== m.id && other.email && other.email.toLowerCase() === m.email.toLowerCase())
+                              return dupes.length > 0 ? (
+                                <div style={{
+                                  background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 'var(--radius-sm)',
+                                  padding: '10px 14px', margin: '0.75rem 0', fontSize: '0.88rem', color: '#856404',
+                                }}>
+                                  <strong>Duplicate email detected:</strong> {m.email} is also used by{' '}
+                                  {dupes.map((d, i) => (
+                                    <span key={d.id}>
+                                      {i > 0 && ', '}
+                                      <strong>{d.firstName} {d.lastName}</strong> (ID: {d.memberId || d.id})
+                                    </span>
+                                  ))}
+                                  {' '}&mdash;{' '}
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); navigate(`/admin/merge?member=${m.id}`) }}
+                                    style={{
+                                      background: 'none', border: 'none', color: '#856404', cursor: 'pointer',
+                                      textDecoration: 'underline', fontWeight: 600, padding: 0, fontSize: 'inherit',
+                                    }}
+                                  >
+                                    Merge accounts
+                                  </button>
+                                </div>
+                              ) : null
+                            })()}
 
                             {/* Aliases */}
                             <h4>Aliases</h4>

@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import * as api from '../api'
+import PaymentChooser from '../components/PaymentChooser'
 
 const MEMBERSHIP_PLANS = [
   { id: 'single', label: 'Single', price: 100 },
@@ -20,10 +21,17 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
   const [payingType, setPayingType] = useState(null)
   const [paySuccess, setPaySuccess] = useState(false)
   const [successMessage, setSuccessMessage] = useState('Payment processed successfully!')
+  const [paying, setPaying] = useState(false)
+  const [payError, setPayError] = useState('')
+  const chooserRef = useRef(null)
 
   const [extraDonation, setExtraDonation] = useState(0)
   const [extraDonationChoice, setExtraDonationChoice] = useState(null)
   const [extraDonationCustom, setExtraDonationCustom] = useState('')
+
+  // Alias state
+  const [selectedAlias, setSelectedAlias] = useState('')
+  const memberAliases = currentMember.aliases || []
 
   // Deposit state
   const [depositAmount, setDepositAmount] = useState('')
@@ -190,6 +198,39 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
   const confirmPayment = async () => {
     const now = new Date().toISOString().split('T')[0]
     const methodLabel = getPaymentMethodLabel()
+    setPaying(true)
+    setPayError('')
+
+    // 1) Run the card charge first if any portion is on a card.
+    //    `gw` carries gatewayRefNum / authCode / last4 / brand to attach to each ledger entry.
+    let gw = {}
+    if (cardPortion > 0) {
+      try {
+        const summary =
+          payingType === 'deposit' ? 'Account deposit'
+          : payingType === 'pledges' ? `STCD payment (${selectedPledges.length} pledge${selectedPledges.length !== 1 ? 's' : ''}${extraDonation > 0 ? ' + donation' : ''})`
+          : 'STCD donation'
+        const res = await chooserRef.current.charge({
+          amount: cardPortion,
+          paymentType: payingType === 'deposit' ? 'membership' : payingType === 'pledges' ? 'pledge' : 'donation',
+          description: summary,
+          skipRecord: true, // we'll record per-line below with gateway metadata
+        })
+        gw = {
+          gatewayRefNum: res.gatewayRefNum,
+          gatewayAuthCode: res.authCode,
+          gatewayResult: 'A',
+          gatewayStatus: 'Approved',
+          cardLast4: res.last4,
+          cardBrand: res.cardBrand,
+          paymentMethodId: res.paymentMethodId || '',
+        }
+      } catch (e) {
+        setPayError(e.message || 'Charge failed')
+        setPaying(false)
+        return
+      }
+    }
 
     if (payingType === 'deposit') {
       const amt = parseFloat(depositAmount)
@@ -201,6 +242,8 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
           amount: amt,
           method: 'Credit Card',
           paymentType: 'membership',
+          ...(selectedAlias ? { alias: selectedAlias } : {}),
+          ...gw,
         })
       } catch (e) { console.error(e) }
       setMemberBalances(prev => ({ ...prev, [currentMemberId]: (prev[currentMemberId] || 0) + amt }))
@@ -210,6 +253,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
       setSuccessMessage(`$${amt.toLocaleString()} added to your account balance!`)
       setPaySuccess(true)
       setTimeout(() => setPaySuccess(false), 3000)
+      setPaying(false)
       if (refreshData) refreshData()
       return
     }
@@ -226,7 +270,6 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
 
     if (payingType === 'pledges') {
       const updates = {}
-      // Create API transactions for each pledge payment
       for (const p of unpaidPledges.filter(p => selectedPledges.includes(p.id))) {
         const payAmt = getPaymentAmount(p.id)
         updates[p.id] = (pledgePayments[p.id] || 0) + payAmt
@@ -237,6 +280,9 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
             amount: payAmt,
             method: methodLabel,
             date: now,
+            ...(selectedAlias ? { alias: selectedAlias } : {}),
+            ...gw,
+            groupId,
           })
         } catch (e) { console.error(e) }
       }
@@ -252,6 +298,8 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
             method: methodLabel,
             paymentType: 'donation',
             groupId,
+            ...(selectedAlias ? { alias: selectedAlias } : {}),
+            ...gw,
           })
         } catch (e) { console.error(e) }
       }
@@ -268,6 +316,8 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
           amount: parseFloat(donationAmount),
           method: methodLabel,
           paymentType: 'donation',
+          ...(selectedAlias ? { alias: selectedAlias } : {}),
+          ...gw,
         })
       } catch (e) { console.error(e) }
       setDonationAmount('')
@@ -279,6 +329,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
     setExtraDonationCustom('')
     setSuccessMessage('Payment processed successfully!')
     setPaySuccess(true)
+    setPaying(false)
     if (refreshData) refreshData()
     setTimeout(() => setPaySuccess(false), 3000)
   }
@@ -659,33 +710,51 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
                 </>
               )}
 
-              {renderPaymentMethodSelector()}
-
-              {showCardForm && (
-                <div className="modal-payment-form">
-                  <div className="form-group">
-                    <label>Card Number</label>
-                    <input type="text" placeholder="4242 4242 4242 4242" maxLength="19" />
-                  </div>
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label>Expiry</label>
-                      <input type="text" placeholder="MM/YY" maxLength="5" />
-                    </div>
-                    <div className="form-group">
-                      <label>CVV</label>
-                      <input type="text" placeholder="123" maxLength="4" />
-                    </div>
-                  </div>
-                  <div className="form-group">
-                    <label>Name on Card</label>
-                    <input type="text" placeholder={`${currentMember.firstName} ${currentMember.lastName}`} />
-                  </div>
+              {memberAliases.length > 0 && (
+                <div className="form-group" style={{ marginTop: '1rem' }}>
+                  <label style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.35rem', display: 'block' }}>Paying As</label>
+                  <select
+                    value={selectedAlias}
+                    onChange={e => setSelectedAlias(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', fontSize: '0.9rem' }}
+                  >
+                    <option value="">{currentMember.firstName} {currentMember.lastName} (Primary)</option>
+                    {memberAliases.map((alias, i) => (
+                      <option key={i} value={alias}>{alias}</option>
+                    ))}
+                  </select>
                 </div>
               )}
 
-              <button className="pay-btn modal-pay-btn" onClick={confirmPayment}>
-                {payingType === 'deposit'
+              {renderPaymentMethodSelector()}
+
+              {showCardForm && cardPortion > 0 && (
+                <div className="modal-payment-form" style={{ padding: 16, background: '#fafafa', borderRadius: 12 }}>
+                  <PaymentChooser
+                    ref={chooserRef}
+                    memberId={String(currentMemberId)}
+                    amount={cardPortion}
+                  />
+                </div>
+              )}
+
+              {payError && (
+                <div style={{
+                  background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b',
+                  padding: 10, borderRadius: 8, marginTop: 12, fontSize: 13,
+                }}>
+                  {payError}
+                </div>
+              )}
+
+              <button
+                className="pay-btn modal-pay-btn"
+                onClick={confirmPayment}
+                disabled={paying}
+              >
+                {paying
+                  ? 'Processing…'
+                  : payingType === 'deposit'
                   ? `Add $${(parseFloat(depositAmount) || 0).toLocaleString()} to Balance`
                   : `Confirm & Pay $${modalTotal.toLocaleString()}`
                 }

@@ -8,6 +8,7 @@ import MakePayment from './pages/MakePayment'
 import Sponsor from './pages/Sponsor'
 import Profile from './pages/Profile'
 import AccountStatements from './pages/AccountStatements'
+import SavedCards from './pages/SavedCards'
 import AdminDashboard from './pages/admin/AdminDashboard'
 import AdminMembers from './pages/admin/AdminMembers'
 import AdminPledges from './pages/admin/AdminPledges'
@@ -589,6 +590,10 @@ function App() {
               refreshData={refreshData}
             />
           }
+        />
+        <Route
+          path="/cards"
+          element={<SavedCards currentMember={currentMember} />}
         />
         <Route
           path="/profile"
