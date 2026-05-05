@@ -75,6 +75,24 @@ def _json_default(obj):
 
 _current_event = {'headers': {}}
 
+# ===== Account Balance taxonomy =====
+# Charges (reduce Account Balance — member owes money):
+CHARGE_PAYMENT_TYPES = {'pledge-charge', 'membership-fee', 'sponsorship-fee', 'purchase-fee', 'charge'}
+# Payments (raise Account Balance back toward $0):
+PAYMENT_PAYMENT_TYPES = {'pledge', 'membership-payment', 'sponsorship-payment', 'purchase-payment', 'payment'}
+# Neutral (still display in ledger; show a small note explaining no balance impact):
+NEUTRAL_PAYMENT_TYPES = {'donation', 'deposit'}
+
+# Default monthly membership prices when stcd_settings has no membershipPlans entry.
+DEFAULT_MEMBERSHIP_PRICING = {
+    ('full', 'single'):  100,
+    ('full', 'couple'):  150,
+    ('full', 'family'):  180,
+    ('associate', 'single'): 60,
+    ('associate', 'couple'): 90,
+    ('associate', 'family'): 120,
+}
+
 
 def respond(status, body):
     return {
@@ -97,9 +115,129 @@ def extract_path_id(path, prefix):
     return rest.split('/')[0] if rest else None
 
 
+def _all_member_transactions(member_id):
+    """Fetch every transaction row for a member."""
+    res = transactions_table.query(
+        KeyConditionExpression=Key('memberId').eq(str(member_id))
+    )
+    items = list(res.get('Items', []))
+    while 'LastEvaluatedKey' in res:
+        res = transactions_table.query(
+            KeyConditionExpression=Key('memberId').eq(str(member_id)),
+            ExclusiveStartKey=res['LastEvaluatedKey'],
+        )
+        items.extend(res.get('Items', []))
+    return items
+
+
+def compute_account_balance(member_id):
+    """
+    Account Balance = (sum of payment txns) - (sum of charge txns).
+    Pledges contribute through their charge txn (paymentType='pledge-charge'),
+    not through pledges_table — that's just the per-pledge tracking record.
+    """
+    total = Decimal('0')
+    for t in _all_member_transactions(member_id):
+        ptype = t.get('paymentType', '')
+        amt = Decimal(str(t.get('amount', 0)))
+        if ptype in CHARGE_PAYMENT_TYPES:
+            total -= amt
+        elif ptype in PAYMENT_PAYMENT_TYPES:
+            total += amt
+        # NEUTRAL_PAYMENT_TYPES: skip
+    return total
+
+
+def _make_pair_id():
+    return f"PAIR-{uuid.uuid4().hex[:10]}"
+
+
+def _write_charge_payment_pair(member_id, date, amount, charge_type, payment_type,
+                                charge_description, payment_description, **extra):
+    """
+    Atomically write a fee+payment pair (e.g. membership-fee + membership-payment,
+    or sponsorship-fee + sponsorship-payment). The two rows share `pairId` so
+    callers can find them later (e.g. to refund).
+
+    Returns (charge_txn, payment_txn).
+    """
+    member_id_str = str(member_id)
+    pair_id = _make_pair_id()
+    now_suffix = uuid.uuid4().hex[:8]
+    year_month = (date or '')[:7]
+    amount_dec = Decimal(str(amount))
+
+    base = {
+        'memberId': member_id_str,
+        'date': date,
+        'txnDate': date,
+        'yearMonth': year_month,
+        'amount': amount_dec,
+        'pairId': pair_id,
+        'method': extra.get('method', ''),
+        'category': extra.get('category', ''),
+        'groupId': extra.get('groupId', ''),
+        'productId': extra.get('productId', ''),
+        'pledgeId': extra.get('pledgeId', ''),
+        'invoice': extra.get('invoice', ''),
+        'alias': extra.get('alias', ''),
+        # Gateway metadata only attaches to the payment row
+    }
+    charge = {
+        **base,
+        'transactionId': f"TXN#{date}#{now_suffix}-c",
+        'description': charge_description,
+        'paymentType': charge_type,
+    }
+    payment = {
+        **base,
+        'transactionId': f"TXN#{date}#{now_suffix}-p",
+        'description': payment_description,
+        'paymentType': payment_type,
+        'paymentMethodId': extra.get('paymentMethodId', ''),
+        'cardLast4': extra.get('cardLast4', ''),
+        'cardBrand': extra.get('cardBrand', ''),
+        'gatewayRefNum': extra.get('gatewayRefNum', ''),
+        'gatewayAuthCode': extra.get('gatewayAuthCode', ''),
+        'gatewayResult': extra.get('gatewayResult', ''),
+        'gatewayStatus': extra.get('gatewayStatus', ''),
+    }
+    balance_applied = Decimal(str(extra.get('balanceApplied', 0)))
+    if balance_applied > 0:
+        payment['balanceApplied'] = balance_applied
+
+    # Strip empties
+    charge = {k: v for k, v in charge.items() if v not in ('', None)}
+    payment = {k: v for k, v in payment.items() if v not in ('', None)}
+    transactions_table.put_item(Item=charge)
+    transactions_table.put_item(Item=payment)
+
+    # If part of the payment was funded by stored Account Credit, debit it.
+    if balance_applied > 0:
+        _adjust_member_balance(member_id_str, -balance_applied)
+
+    return charge, payment
+
+
+def _membership_monthly_amount(membership_type, membership_plan, settings_pricing=None):
+    """Look up monthly fee for a (type, plan) combination."""
+    if settings_pricing:
+        for entry in settings_pricing:
+            if entry.get('type') == membership_type and entry.get('plan') == membership_plan:
+                return Decimal(str(entry.get('price', 0)))
+    return Decimal(str(DEFAULT_MEMBERSHIP_PRICING.get((membership_type, membership_plan), 0)))
+
+
 def lambda_handler(event, context):
     global _current_event
     _current_event = event
+
+    # Scheduled invocation from EventBridge — no API Gateway envelope.
+    if event.get('source') == 'aws.events' or event.get('scheduled_action'):
+        action = event.get('scheduled_action') or event.get('detail', {}).get('action')
+        if action == 'monthly_membership' or event.get('source') == 'aws.events':
+            return run_monthly_membership_billing()
+        return {'statusCode': 200, 'body': json.dumps({'message': 'ignored'})}
 
     method = event.get('httpMethod', '')
     path = event.get('path', '')
@@ -117,6 +255,9 @@ def lambda_handler(event, context):
             return get_member(extract_path_id(path, '/members/'))
         if path == '/members' and method == 'POST':
             return create_member(parse_body(event))
+        if path.startswith('/members/') and path.endswith('/autopay') and method == 'PUT':
+            mid = extract_path_id(path, '/members/')
+            return set_member_autopay(mid, parse_body(event))
         if path.startswith('/members/') and method == 'PUT':
             return update_member(extract_path_id(path, '/members/'), parse_body(event))
 
@@ -126,6 +267,8 @@ def lambda_handler(event, context):
         if path.startswith('/transactions/member/') and method == 'GET':
             member_id = path.split('/transactions/member/')[1]
             return get_member_transactions(member_id, event)
+        if path == '/transactions/pair' and method == 'POST':
+            return create_charge_payment_pair(parse_body(event))
         if path == '/transactions' and method == 'POST':
             return create_transaction(parse_body(event))
         if path.startswith('/transactions/') and method == 'PUT':
@@ -230,6 +373,13 @@ def get_member(member_id):
     item = result.get('Item')
     if not item:
         return respond(404, {'error': 'Member not found'})
+    # Augment with computed Account Balance.
+    # 'balance' field on the member itself is Account Credit (stored prepaid funds);
+    # we keep the legacy name on the wire to avoid breaking callers, plus add the
+    # explicit names for clarity.
+    account_credit = Decimal(str(item.get('balance', 0)))
+    item['accountCredit'] = account_credit
+    item['accountBalance'] = compute_account_balance(member_id)
     return respond(200, item)
 
 
@@ -441,6 +591,199 @@ def _adjust_member_balance(member_id, delta):
         print(f"[balance] failed to adjust member {member_id} by {delta}: {e}")
 
 
+def create_charge_payment_pair(body):
+    """
+    Write a fee+payment pair (membership / sponsorship / purchase / generic charge).
+    Body:
+      memberId, date, amount, kind ('membership' | 'sponsorship' | 'purchase' | 'charge'),
+      description, [chargeDescription, paymentDescription], [method], [category],
+      [productId], [pledgeId], [groupId], [invoice], [alias],
+      [paymentMethodId], [cardLast4], [cardBrand],
+      [gatewayRefNum], [gatewayAuthCode], [gatewayResult], [gatewayStatus],
+      [balanceApplied]
+    """
+    member_id = body.get('memberId')
+    date = body.get('date') or time.strftime('%Y-%m-%d', time.gmtime())
+    amount = body.get('amount')
+    kind = (body.get('kind') or 'charge').lower()
+    if not member_id or amount is None:
+        return respond(400, {'error': 'memberId and amount are required'})
+    try:
+        amount_dec = Decimal(str(amount))
+    except Exception:
+        return respond(400, {'error': 'amount must be numeric'})
+    if amount_dec <= 0:
+        return respond(400, {'error': 'amount must be > 0'})
+
+    pair_kinds = {
+        'membership':  ('membership-fee',  'membership-payment',  'Membership fee',     'Membership payment'),
+        'sponsorship': ('sponsorship-fee', 'sponsorship-payment', 'Sponsorship fee',    'Sponsorship payment'),
+        'purchase':    ('purchase-fee',    'purchase-payment',    'Purchase',           'Purchase payment'),
+        'charge':      ('charge',          'payment',             'Charge',             'Payment'),
+    }
+    if kind not in pair_kinds:
+        return respond(400, {'error': f'kind must be one of {list(pair_kinds)}'})
+    charge_type, payment_type, default_charge_desc, default_payment_desc = pair_kinds[kind]
+
+    description = body.get('description') or ''
+    charge_desc = body.get('chargeDescription') or description or default_charge_desc
+    payment_desc = body.get('paymentDescription') or description or default_payment_desc
+
+    extra_keys = (
+        'method', 'category', 'groupId', 'productId', 'pledgeId', 'invoice', 'alias',
+        'paymentMethodId', 'cardLast4', 'cardBrand',
+        'gatewayRefNum', 'gatewayAuthCode', 'gatewayResult', 'gatewayStatus',
+        'balanceApplied',
+    )
+    extras = {k: body.get(k, '') for k in extra_keys}
+
+    charge_txn, payment_txn = _write_charge_payment_pair(
+        member_id, date, amount_dec, charge_type, payment_type,
+        charge_desc, payment_desc, **extras,
+    )
+    return respond(201, {'charge': charge_txn, 'payment': payment_txn})
+
+
+def set_member_autopay(member_id, body):
+    """PUT /members/:id/autopay  body: {enabled: bool, paymentMethodId: str}"""
+    enabled = bool(body.get('enabled'))
+    payment_method_id = body.get('paymentMethodId') or ''
+    if enabled and not payment_method_id:
+        return respond(400, {'error': 'paymentMethodId is required when enabling autopay'})
+    members_table.update_item(
+        Key={'memberId': str(member_id)},
+        UpdateExpression='SET autopayEnabled = :e, autopayPaymentMethodId = :p',
+        ExpressionAttributeValues={
+            ':e': enabled,
+            ':p': payment_method_id,
+        },
+    )
+    return respond(200, {
+        'message': 'Autopay updated',
+        'autopayEnabled': enabled,
+        'autopayPaymentMethodId': payment_method_id,
+    })
+
+
+def _membership_pricing_from_settings():
+    """Read settings.membershipPricing if present. Returns list of {type, plan, price}."""
+    try:
+        res = settings_table.get_item(Key={'settingKey': 'membershipPricing'})
+        items = res.get('Item', {}).get('items', [])
+        return items
+    except Exception:
+        return []
+
+
+def run_monthly_membership_billing():
+    """
+    Idempotent monthly tick. For every member with a membershipType+plan:
+      - Skip if a membership-fee for the current month already exists.
+      - If autopay+paymentMethod: charge via Sola; on success write fee+payment pair.
+      - Else: write only the fee charge (no email reminder yet — SES not set up).
+    """
+    today = time.strftime('%Y-%m-%d', time.gmtime())
+    year_month = today[:7]
+    pricing = _membership_pricing_from_settings()
+
+    res = members_table.scan()
+    members = list(res.get('Items', []))
+    while 'LastEvaluatedKey' in res:
+        res = members_table.scan(ExclusiveStartKey=res['LastEvaluatedKey'])
+        members.extend(res.get('Items', []))
+
+    summary = {'processed': 0, 'autopay_succeeded': 0, 'autopay_failed': 0,
+               'fee_only': 0, 'skipped_already_billed': 0, 'skipped_no_plan': 0}
+
+    for m in members:
+        mtype = m.get('membershipType', '')
+        plan = m.get('membershipPlan', '')
+        if not mtype or not plan:
+            summary['skipped_no_plan'] += 1
+            continue
+
+        amount = _membership_monthly_amount(mtype, plan, pricing)
+        if amount <= 0:
+            summary['skipped_no_plan'] += 1
+            continue
+
+        member_id = str(m['memberId'])
+        # Idempotency: any membership-fee txn this month?
+        existing_this_month = False
+        for t in _all_member_transactions(member_id):
+            if t.get('paymentType') == 'membership-fee' and t.get('yearMonth') == year_month:
+                existing_this_month = True
+                break
+        if existing_this_month:
+            summary['skipped_already_billed'] += 1
+            continue
+
+        summary['processed'] += 1
+        autopay = bool(m.get('autopayEnabled'))
+        pm_id = m.get('autopayPaymentMethodId', '')
+        charge_succeeded = False
+        gw_meta = {}
+
+        if autopay and pm_id:
+            pm = payment_methods_table.get_item(Key={
+                'memberId': int(member_id) if member_id.isdigit() else member_id,
+                'paymentMethodId': pm_id,
+            }).get('Item')
+            if pm:
+                payload = {
+                    'xCommand': 'cc:sale',
+                    'xAmount': f"{float(amount):.2f}",
+                    'xToken': pm['xToken'],
+                    'xDescription': f"STCD monthly membership ({plan})",
+                }
+                ok, resp = _sola_post(payload)
+                if ok:
+                    charge_succeeded = True
+                    gw_meta = {
+                        'paymentMethodId': pm_id,
+                        'cardLast4': pm.get('last4', ''),
+                        'cardBrand': pm.get('cardBrand', ''),
+                        'gatewayRefNum': resp.get('xRefNum', ''),
+                        'gatewayAuthCode': resp.get('xAuthCode', ''),
+                        'gatewayResult': resp.get('xResult', ''),
+                        'gatewayStatus': resp.get('xStatus', ''),
+                    }
+
+        plan_label = f"{mtype.capitalize()} {plan.capitalize()}"
+        if charge_succeeded:
+            _write_charge_payment_pair(
+                member_id, today, amount,
+                'membership-fee', 'membership-payment',
+                f"Monthly membership — {plan_label}",
+                f"Monthly membership payment — {plan_label}",
+                category='Membership',
+                method='Auto-Pay (card on file)',
+                **gw_meta,
+            )
+            summary['autopay_succeeded'] += 1
+        else:
+            # Write only the fee row. Member sees -$X on Account Balance until they pay.
+            charge_txn = {
+                'memberId': member_id,
+                'transactionId': f"TXN#{today}#{uuid.uuid4().hex[:8]}",
+                'date': today,
+                'txnDate': today,
+                'yearMonth': year_month,
+                'description': f"Monthly membership — {plan_label}",
+                'amount': amount,
+                'paymentType': 'membership-fee',
+                'category': 'Membership',
+            }
+            transactions_table.put_item(Item=charge_txn)
+            if autopay and pm_id:
+                summary['autopay_failed'] += 1
+            else:
+                summary['fee_only'] += 1
+
+    print(f"[monthly billing] {summary}")
+    return {'statusCode': 200, 'body': json.dumps(summary)}
+
+
 def update_transaction(body):
     member_id = body['memberId']
     txn_id = body['transactionId']
@@ -528,6 +871,24 @@ def create_pledge(body):
     }
 
     pledges_table.put_item(Item=item)
+
+    # Mirror the pledge as a charge transaction so the ledger and
+    # Account Balance see -$amount immediately.
+    desc = item['description'] or item['pledgeType'] or 'Pledge'
+    charge_txn = {
+        'memberId': str(member_id),
+        'transactionId': f"TXN#{date}#{uuid.uuid4().hex[:8]}",
+        'date': date,
+        'txnDate': date,
+        'yearMonth': date[:7] if date else '',
+        'description': desc,
+        'amount': item['amount'],
+        'paymentType': 'pledge-charge',
+        'pledgeId': pledge_id,
+        'category': item['category'],
+    }
+    charge_txn = {k: v for k, v in charge_txn.items() if v not in ('', None)}
+    transactions_table.put_item(Item=charge_txn)
     return respond(201, item)
 
 
@@ -564,6 +925,26 @@ def update_pledge(body):
             ExpressionAttributeNames=expr_names,
             ExpressionAttributeValues=expr_values,
         )
+
+    # Keep the mirrored pledge-charge txn aligned with the pledge.
+    # On cancel, drop the charge so balance stops counting it.
+    # On amount change, update the charge amount.
+    if 'canceled' in body and body.get('canceled'):
+        for t in _all_member_transactions(member_id):
+            if t.get('paymentType') == 'pledge-charge' and t.get('pledgeId') == pledge_id:
+                transactions_table.delete_item(Key={
+                    'memberId': t['memberId'],
+                    'transactionId': t['transactionId'],
+                })
+    elif 'amount' in body:
+        new_amt = Decimal(str(body['amount']))
+        for t in _all_member_transactions(member_id):
+            if t.get('paymentType') == 'pledge-charge' and t.get('pledgeId') == pledge_id:
+                transactions_table.update_item(
+                    Key={'memberId': t['memberId'], 'transactionId': t['transactionId']},
+                    UpdateExpression='SET amount = :a',
+                    ExpressionAttributeValues={':a': new_amt},
+                )
 
     return respond(200, {'message': 'Pledge updated'})
 
@@ -638,6 +1019,13 @@ def delete_pledge(body):
     member_id = body['memberId']
     pledge_id = body['pledgeId']
     pledges_table.delete_item(Key={'memberId': member_id, 'pledgeId': pledge_id})
+    # Drop the matching pledge-charge txn so the balance recovers.
+    for t in _all_member_transactions(member_id):
+        if t.get('paymentType') == 'pledge-charge' and t.get('pledgeId') == pledge_id:
+            transactions_table.delete_item(Key={
+                'memberId': t['memberId'],
+                'transactionId': t['transactionId'],
+            })
     return respond(200, {'message': 'Pledge deleted'})
 
 

@@ -1,5 +1,7 @@
 import { useState, useMemo } from 'react'
+import { withRunningBalance, balanceImpact, neutralReason, paymentTypeLabel } from '../ledger'
 
+// eslint-disable-next-line no-unused-vars
 export default function PaymentHistory({ currentMember, pledgePayments, extraPayments, adminTransactions }) {
   const [filter, setFilter] = useState('all')
   const [typeFilter, setTypeFilter] = useState('all')
@@ -10,68 +12,25 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
 
   const memberAliases = currentMember.aliases || []
 
+  // currentMember.paymentHistory is the full transaction list including charge rows
+  // (pledge-charge / membership-fee / sponsorship-fee / etc.) thanks to App.jsx.
   const memberPaymentHistory = currentMember.paymentHistory
   const memberAdminTxns = (adminTransactions || []).filter(t => t.memberId === currentMember.id)
 
-  const allPayments = useMemo(() => {
+  const allTxns = useMemo(() => {
     return [...memberPaymentHistory, ...extraPayments, ...memberAdminTxns]
-      .sort((a, b) => new Date(b.date) - new Date(a.date))
   }, [memberPaymentHistory, extraPayments, memberAdminTxns])
 
-  // Build a full ledger: charges (pledges) + payments, sorted oldest-first for running balance
-  const ledgerEntries = useMemo(() => {
-    const entries = []
+  const annotatedAll = useMemo(() => withRunningBalance(allTxns), [allTxns])
 
-    // Add pledges as charges
-    for (const p of currentMember.pledges) {
-      if (p.canceled) continue
-      entries.push({
-        id: `pledge-${p.id}`,
-        date: p.date,
-        description: p.description || p.pledgeType || 'Pledge',
-        type: 'charge',
-        category: p.category || 'pledge',
-        amount: p.amount,
-        method: '',
-        alias: '',
-      })
-    }
+  // Newest-first for the displayed payments list
+  const allPayments = useMemo(
+    () => [...annotatedAll].sort((a, b) => new Date(b.date) - new Date(a.date)),
+    [annotatedAll],
+  )
 
-    // Add payments as credits
-    for (const p of [...memberPaymentHistory, ...extraPayments, ...memberAdminTxns]) {
-      entries.push({
-        id: p.id || `pay-${p.date}-${p.amount}`,
-        date: p.date,
-        description: p.description,
-        type: 'payment',
-        category: p.paymentType || '',
-        amount: p.amount,
-        method: p.method || '',
-        alias: p.alias || '',
-      })
-    }
-
-    // Sort oldest first for running balance calculation
-    entries.sort((a, b) => {
-      const diff = new Date(a.date) - new Date(b.date)
-      // If same date, charges before payments
-      if (diff === 0) return a.type === 'charge' ? -1 : 1
-      return diff
-    })
-
-    // Calculate running balance (charges increase balance owed, payments decrease it)
-    let running = 0
-    for (const entry of entries) {
-      if (entry.type === 'charge') {
-        running += entry.amount
-      } else {
-        running -= entry.amount
-      }
-      entry.balance = running
-    }
-
-    return entries
-  }, [currentMember.pledges, memberPaymentHistory, extraPayments, memberAdminTxns])
+  // Newest-first for the ledger view (running balance was computed oldest->newest)
+  const ledgerEntries = useMemo(() => [...annotatedAll].reverse(), [annotatedAll])
 
   const today = new Date()
   const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1)
@@ -89,10 +48,19 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
     return true
   }
 
+  const matchesTypeFilter = (p) => {
+    if (typeFilter === 'all') return true
+    if (typeFilter === 'pledges') return p.paymentType === 'pledge' || p.paymentType === 'pledge-charge'
+    if (typeFilter === 'membership') return p.paymentType === 'membership-fee' || p.paymentType === 'membership-payment'
+    if (typeFilter === 'sponsorship') return p.paymentType === 'sponsorship-fee' || p.paymentType === 'sponsorship-payment'
+    if (typeFilter === 'purchase') return p.paymentType === 'purchase-fee' || p.paymentType === 'purchase-payment'
+    return p.paymentType === typeFilter
+  }
+
   const filteredPayments = useMemo(() => {
     return allPayments.filter(p => {
       if (!dateFilter(p.date)) return false
-      if (typeFilter !== 'all' && p.paymentType !== typeFilter) return false
+      if (!matchesTypeFilter(p)) return false
       if (aliasFilter !== 'all') {
         if (aliasFilter === '__primary__' && p.alias) return false
         if (aliasFilter !== '__primary__' && aliasFilter !== 'all' && p.alias !== aliasFilter) return false
@@ -103,10 +71,16 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
 
   const filteredLedger = useMemo(() => {
     return ledgerEntries.filter(e => dateFilter(e.date))
-      .reverse() // newest first for display
   }, [ledgerEntries, filter, startDate, endDate])
 
-  const totalFiltered = filteredPayments.reduce((sum, p) => sum + p.amount, 0)
+  // Show net (payments - charges) to match the running-balance concept
+  const totalFiltered = filteredPayments.reduce((sum, p) => {
+    const impact = p.balanceImpact ?? balanceImpact(p.paymentType)
+    if (impact === 'charge') return sum - p.amount
+    if (impact === 'payment') return sum + p.amount
+    return sum
+  }, 0)
+  const accountBalance = currentMember.accountBalance ?? 0
 
   const formatDate = (dateStr) => {
     const d = new Date(dateStr + 'T00:00:00')
@@ -114,15 +88,18 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
   }
 
   const paymentTypeBadge = (type) => {
+    const root = type?.split('-')[0]
     const cls = {
       membership: 'badge-membership',
       pledge: 'badge-pledge',
       donation: 'badge-donation',
       purchase: 'badge-purchase',
+      sponsorship: 'badge-purchase',
       deposit: 'badge-membership',
-    }[type] || 'badge-pending'
-    const label = type === 'deposit' ? 'Account Credit' : (type ? type.charAt(0).toUpperCase() + type.slice(1) : '—')
-    return <span className={`badge ${cls}`}>{label}</span>
+      charge: 'badge-pending',
+      payment: 'badge-paid',
+    }[root] || 'badge-pending'
+    return <span className={`badge ${cls}`}>{paymentTypeLabel(type)}</span>
   }
 
   return (
@@ -196,7 +173,8 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
               { key: 'all', label: 'All Types' },
               { key: 'deposit', label: 'Account Credit' },
               { key: 'membership', label: 'Membership' },
-              { key: 'pledge', label: 'Pledge' },
+              { key: 'pledges', label: 'Pledges' },
+              { key: 'sponsorship', label: 'Sponsorship' },
               { key: 'donation', label: 'Donation' },
               { key: 'purchase', label: 'Purchase' },
             ].map(f => (
@@ -233,10 +211,12 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
 
           <div className="history-summary">
             <span className="history-summary-label">
-              Total ({filter === 'all' ? 'All Time' : filter === 'month' ? 'This Month' : filter === 'ytd' ? 'Year to Date' : 'Selected Range'}):
+              Net ({filter === 'all' ? 'All Time' : filter === 'month' ? 'This Month' : filter === 'ytd' ? 'Year to Date' : 'Selected Range'}):
             </span>
-            <span className="history-summary-amount">${totalFiltered.toLocaleString()}</span>
-            <span className="history-summary-count">{filteredPayments.length} payment{filteredPayments.length !== 1 ? 's' : ''}</span>
+            <span className="history-summary-amount" style={{ color: totalFiltered < 0 ? 'var(--danger)' : '' }}>
+              {totalFiltered < 0 ? '-' : ''}${Math.abs(totalFiltered).toLocaleString()}
+            </span>
+            <span className="history-summary-count">{filteredPayments.length} entr{filteredPayments.length !== 1 ? 'ies' : 'y'}</span>
           </div>
 
           <div className="pledges-table-wrap">
@@ -255,16 +235,32 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                 {filteredPayments.length === 0 ? (
                   <tr><td colSpan={memberAliases.length > 0 ? 6 : 5} className="empty-row">No payments found for this period</td></tr>
                 ) : (
-                  filteredPayments.map((p, idx) => (
-                    <tr key={p.id || idx}>
-                      <td>{formatDate(p.date)}</td>
-                      <td>{p.description}</td>
-                      {memberAliases.length > 0 && <td style={{ fontSize: '0.82rem' }}>{p.alias || `${currentMember.firstName} ${currentMember.lastName}`}</td>}
-                      <td>{paymentTypeBadge(p.paymentType)}</td>
-                      <td className="amount-cell">${p.amount.toLocaleString()}</td>
-                      <td>{p.method}</td>
-                    </tr>
-                  ))
+                  filteredPayments.map((p, idx) => {
+                    const impact = p.balanceImpact ?? balanceImpact(p.paymentType)
+                    const isNeutral = impact === 'neutral'
+                    const noteText = isNeutral ? neutralReason(p.paymentType) : ''
+                    const sign = impact === 'charge' ? '-' : impact === 'payment' ? '+' : ''
+                    const color = impact === 'charge' ? 'var(--danger)' : impact === 'payment' ? 'var(--success)' : 'inherit'
+                    return (
+                      <tr key={p.id || idx}>
+                        <td>{formatDate(p.date)}</td>
+                        <td>
+                          {p.description}
+                          {noteText && (
+                            <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '2px' }}>
+                              {noteText}
+                            </div>
+                          )}
+                        </td>
+                        {memberAliases.length > 0 && <td style={{ fontSize: '0.82rem' }}>{p.alias || `${currentMember.firstName} ${currentMember.lastName}`}</td>}
+                        <td>{paymentTypeBadge(p.paymentType)}</td>
+                        <td className="amount-cell" style={{ color, fontWeight: sign ? 600 : 400 }}>
+                          {sign}${p.amount.toLocaleString()}
+                        </td>
+                        <td>{p.method}</td>
+                      </tr>
+                    )
+                  })
                 )}
               </tbody>
             </table>
@@ -275,10 +271,10 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
       {viewMode === 'ledger' && (
         <>
           <div className="history-summary">
-            <span className="history-summary-label">Current Balance Owed:</span>
-            <span className="history-summary-amount" style={{ color: ledgerEntries.length > 0 && ledgerEntries[ledgerEntries.length - 1].balance > 0 ? 'var(--danger, #dc3545)' : 'var(--success)' }}>
-              ${ledgerEntries.length > 0 ? Math.abs(ledgerEntries[ledgerEntries.length - 1].balance).toLocaleString() : '0'}
-              {ledgerEntries.length > 0 && ledgerEntries[ledgerEntries.length - 1].balance < 0 && ' credit'}
+            <span className="history-summary-label">Current Account Balance:</span>
+            <span className="history-summary-amount" style={{ color: accountBalance < 0 ? 'var(--danger)' : 'var(--success)' }}>
+              {accountBalance < 0 ? '-' : ''}${Math.abs(accountBalance).toLocaleString()}
+              {accountBalance > 0 && ' credit'}
             </span>
             <span className="history-summary-count">{filteredLedger.length} entries</span>
           </div>
@@ -299,28 +295,41 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                 {filteredLedger.length === 0 ? (
                   <tr><td colSpan={6} className="empty-row">No activity found for this period</td></tr>
                 ) : (
-                  filteredLedger.map((e, idx) => (
-                    <tr key={e.id || idx}>
-                      <td>{formatDate(e.date)}</td>
-                      <td>{e.description}</td>
-                      <td>
-                        {e.type === 'charge' ? (
-                          <span className="badge badge-pending">Charge</span>
-                        ) : (
-                          <span className="badge badge-paid">Payment</span>
-                        )}
-                      </td>
-                      <td className="amount-cell" style={{ color: e.type === 'charge' ? 'var(--danger, #dc3545)' : '' }}>
-                        {e.type === 'charge' ? `$${e.amount.toLocaleString()}` : ''}
-                      </td>
-                      <td className="amount-cell" style={{ color: e.type === 'payment' ? 'var(--success)' : '' }}>
-                        {e.type === 'payment' ? `$${e.amount.toLocaleString()}` : ''}
-                      </td>
-                      <td className="amount-cell" style={{ fontWeight: 600, color: e.balance > 0 ? 'var(--danger, #dc3545)' : 'var(--success)' }}>
-                        {e.balance >= 0 ? `$${e.balance.toLocaleString()}` : `-$${Math.abs(e.balance).toLocaleString()}`}
-                      </td>
-                    </tr>
-                  ))
+                  filteredLedger.map((e, idx) => {
+                    const impact = e.balanceImpact ?? balanceImpact(e.paymentType)
+                    const isNeutral = impact === 'neutral'
+                    const noteText = isNeutral ? neutralReason(e.paymentType) : ''
+                    return (
+                      <tr key={e.id || idx}>
+                        <td>{formatDate(e.date)}</td>
+                        <td>
+                          {e.description}
+                          {noteText && (
+                            <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '2px' }}>
+                              {noteText}
+                            </div>
+                          )}
+                        </td>
+                        <td>{paymentTypeBadge(e.paymentType)}</td>
+                        <td className="amount-cell" style={{ color: 'var(--danger)' }}>
+                          {impact === 'charge' ? `$${e.amount.toLocaleString()}` : ''}
+                        </td>
+                        <td className="amount-cell" style={{ color: 'var(--success)' }}>
+                          {impact === 'payment' ? `$${e.amount.toLocaleString()}` : ''}
+                        </td>
+                        <td className="amount-cell" style={{
+                          fontWeight: 600,
+                          color: e.runningBalance < 0 ? 'var(--danger)' : 'var(--success)',
+                        }}>
+                          {isNeutral ? '—' : (
+                            e.runningBalance < 0
+                              ? `-$${Math.abs(e.runningBalance).toLocaleString()}`
+                              : `$${e.runningBalance.toLocaleString()}`
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })
                 )}
               </tbody>
             </table>

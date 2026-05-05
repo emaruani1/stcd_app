@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import AccountSecurity from './AccountSecurity'
+import * as api from '../api'
 
 const HEBREW_MONTHS = [
   'Nisan', 'Iyyar', 'Sivan', 'Tammuz', 'Av', 'Elul',
@@ -454,7 +455,126 @@ export default function Profile({ currentMember, profileData, setProfileData, us
         </button>
       </div>
 
+      <MembershipAutoPay currentMember={currentMember} />
+
       <AccountSecurity userRole={userRole} embedded />
+    </div>
+  )
+}
+
+function MembershipAutoPay({ currentMember }) {
+  const [enabled, setEnabled] = useState(!!currentMember?.autopayEnabled)
+  const [paymentMethodId, setPaymentMethodId] = useState(currentMember?.autopayPaymentMethodId || '')
+  const [methods, setMethods] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [msg, setMsg] = useState({ kind: '', text: '' })
+
+  useEffect(() => {
+    let cancelled = false
+    if (!currentMember?.id) return
+    api.fetchPaymentMethods(currentMember.id)
+      .then(res => {
+        if (cancelled) return
+        const list = res?.paymentMethods || []
+        setMethods(list)
+        // If autopay is enabled but the saved card no longer exists, clear it.
+        if (paymentMethodId && !list.some(m => m.paymentMethodId === paymentMethodId)) {
+          setPaymentMethodId('')
+        }
+        // If no method picked yet, default to the member's default-card.
+        if (!paymentMethodId) {
+          const def = list.find(m => m.isDefault) || list[0]
+          if (def) setPaymentMethodId(def.paymentMethodId)
+        }
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMember?.id])
+
+  const handleSave = async () => {
+    setMsg({ kind: '', text: '' })
+    if (enabled && !paymentMethodId) {
+      setMsg({ kind: 'error', text: 'Pick a saved card to use for auto-pay.' })
+      return
+    }
+    setLoading(true)
+    try {
+      await api.setAutopay(currentMember.id, { enabled, paymentMethodId: enabled ? paymentMethodId : '' })
+      setMsg({ kind: 'success', text: enabled ? 'Auto-pay turned on.' : 'Auto-pay turned off.' })
+    } catch (e) {
+      setMsg({ kind: 'error', text: e.message || 'Could not update auto-pay.' })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const planLabel = currentMember?.membershipPlan
+    ? `${currentMember.membershipType ? currentMember.membershipType.charAt(0).toUpperCase() + currentMember.membershipType.slice(1) + ' ' : ''}${currentMember.membershipPlan.charAt(0).toUpperCase() + currentMember.membershipPlan.slice(1)}`
+    : ''
+
+  return (
+    <div className="profile-section">
+      <h2 className="profile-section-title">Membership Auto-Pay</h2>
+      <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
+        On the 1st of each month, the synagogue charges your monthly membership fee. Turn on auto-pay to settle it automatically with a saved card; otherwise the fee will appear on your Account Balance until you pay it manually.
+      </p>
+
+      {planLabel && (
+        <p style={{ fontSize: '0.85rem', marginBottom: '12px' }}>
+          <strong>Current plan:</strong> {planLabel}
+        </p>
+      )}
+
+      {msg.text && (
+        <div style={{
+          padding: '10px 14px', borderRadius: 'var(--radius-sm)', marginBottom: '12px', fontSize: '0.85rem',
+          color: msg.kind === 'error' ? 'var(--danger)' : 'var(--success)',
+          background: msg.kind === 'error' ? 'var(--danger-bg, #fee)' : '#f0fdf4',
+        }}>{msg.text}</div>
+      )}
+
+      <div className="profile-form-grid">
+        <div className="form-group">
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+              style={{ width: 'auto' }}
+            />
+            <span>Enable monthly auto-pay</span>
+          </label>
+        </div>
+        <div className="form-group">
+          <label htmlFor="autopay-card">Card to charge</label>
+          <select
+            id="autopay-card"
+            value={paymentMethodId}
+            onChange={(e) => setPaymentMethodId(e.target.value)}
+            disabled={!enabled || methods.length === 0}
+          >
+            {methods.length === 0 ? (
+              <option value="">No saved cards — add one in Saved Cards first</option>
+            ) : (
+              <>
+                <option value="">Select a card...</option>
+                {methods.map(m => (
+                  <option key={m.paymentMethodId} value={m.paymentMethodId}>
+                    {m.cardBrand || 'Card'} •••• {m.last4} (exp {m.expMonth}/{m.expYear})
+                    {m.isDefault ? ' — default' : ''}
+                  </option>
+                ))}
+              </>
+            )}
+          </select>
+        </div>
+        <div className="form-group full-width">
+          <button className="pay-btn" onClick={handleSave} disabled={loading}>
+            {loading ? 'Saving...' : 'Save Auto-Pay Settings'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

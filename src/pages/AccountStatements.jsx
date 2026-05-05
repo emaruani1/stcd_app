@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
+import { withRunningBalance, neutralReason, paymentTypeLabel } from '../ledger'
 
 export default function AccountStatements({
   allMembers,
@@ -19,7 +20,12 @@ export default function AccountStatements({
 
   const [startDate, setStartDate] = useState(startOfMonth)
   const [endDate, setEndDate] = useState(todayStr)
-  const [typeFilters, setTypeFilters] = useState(['membership', 'pledge', 'donation', 'purchase'])
+  const ALL_TYPE_FILTERS = [
+    'pledge-charge', 'pledge', 'membership-fee', 'membership-payment',
+    'sponsorship-fee', 'sponsorship-payment', 'purchase-fee', 'purchase-payment',
+    'charge', 'payment', 'donation', 'deposit',
+  ]
+  const [typeFilters, setTypeFilters] = useState(ALL_TYPE_FILTERS)
   const [aliasFilter, setAliasFilter] = useState('all')
   const [preset, setPreset] = useState('mtd')
 
@@ -36,11 +42,11 @@ export default function AccountStatements({
     if (key === 'mtd') {
       setStartDate(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0])
       setEndDate(now.toISOString().split('T')[0])
-      setTypeFilters(['membership', 'pledge', 'donation', 'purchase'])
+      setTypeFilters(ALL_TYPE_FILTERS)
     } else if (key === 'ytd') {
       setStartDate(new Date(now.getFullYear(), 0, 1).toISOString().split('T')[0])
       setEndDate(now.toISOString().split('T')[0])
-      setTypeFilters(['membership', 'pledge', 'donation', 'purchase'])
+      setTypeFilters(ALL_TYPE_FILTERS)
     } else if (key === 'eoy') {
       const year = now.getFullYear() - 1
       setStartDate(`${year}-01-01`)
@@ -49,19 +55,20 @@ export default function AccountStatements({
     } else if (key === 'payments') {
       setStartDate('')
       setEndDate('')
-      setTypeFilters(['membership', 'pledge', 'donation', 'purchase'])
+      setTypeFilters(ALL_TYPE_FILTERS)
     }
   }
 
-  const toggleType = (type) => {
-    setTypeFilters(prev =>
-      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
-    )
-    setPreset('custom')
-  }
+
+  // Annotate ALL transactions with running balance first (so the running balance
+  // reflects the member's full history), then filter for display.
+  const annotatedAll = useMemo(
+    () => withRunningBalance(allTransactions),
+    [allTransactions],
+  )
 
   const filtered = useMemo(() => {
-    return allTransactions.filter(t => {
+    return annotatedAll.filter(t => {
       if (typeFilters.length && !typeFilters.includes(t.paymentType)) return false
       if (startDate) {
         const td = new Date(t.date + 'T00:00:00')
@@ -77,16 +84,22 @@ export default function AccountStatements({
       }
       return true
     })
-  }, [allTransactions, typeFilters, aliasFilter, startDate, endDate])
+  }, [annotatedAll, typeFilters, aliasFilter, startDate, endDate])
 
   const totals = useMemo(() => {
-    const t = { membership: 0, pledge: 0, donation: 0, purchase: 0, total: 0 }
+    const t = { charges: 0, payments: 0, neutral: 0, total: 0 }
     filtered.forEach(txn => {
-      t[txn.paymentType] = (t[txn.paymentType] || 0) + txn.amount
-      t.total += txn.amount
+      const amt = Number(txn.amount) || 0
+      if (txn.balanceImpact === 'charge') t.charges += amt
+      else if (txn.balanceImpact === 'payment') t.payments += amt
+      else t.neutral += amt
+      t.total += amt
     })
     return t
   }, [filtered])
+
+  const accountBalance = member?.accountBalance ?? 0
+  const accountCredit = member?.accountCredit ?? member?.balance ?? 0
 
   // Pledge summary: total pledged vs paid
   const pledgeSummary = useMemo(() => {
@@ -104,13 +117,18 @@ export default function AccountStatements({
   }
 
   const paymentTypeBadge = (type) => {
+    const root = type?.split('-')[0]
     const cls = {
       membership: 'badge-membership',
       pledge: 'badge-pledge',
       donation: 'badge-donation',
       purchase: 'badge-purchase',
-    }[type] || 'badge-pending'
-    return <span className={`badge ${cls}`}>{type ? type.charAt(0).toUpperCase() + type.slice(1) : '—'}</span>
+      sponsorship: 'badge-purchase',
+      charge: 'badge-pending',
+      payment: 'badge-paid',
+      deposit: 'badge-membership',
+    }[root] || 'badge-pending'
+    return <span className={`badge ${cls}`}>{paymentTypeLabel(type)}</span>
   }
 
   const downloadCSV = () => {
@@ -245,16 +263,33 @@ export default function AccountStatements({
         </div>
         <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Show:</span>
-          {['membership', 'pledge', 'donation', 'purchase'].map(type => (
-            <label key={type} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem', cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={typeFilters.includes(type)}
-                onChange={() => toggleType(type)}
-              />
-              {type.charAt(0).toUpperCase() + type.slice(1)}
-            </label>
-          ))}
+          {[
+            { types: ['pledge-charge', 'pledge'], label: 'Pledges' },
+            { types: ['membership-fee', 'membership-payment'], label: 'Membership' },
+            { types: ['sponsorship-fee', 'sponsorship-payment'], label: 'Sponsorships' },
+            { types: ['purchase-fee', 'purchase-payment'], label: 'Purchases' },
+            { types: ['donation'], label: 'Donations' },
+            { types: ['deposit'], label: 'Account Deposits' },
+            { types: ['charge', 'payment'], label: 'Other' },
+          ].map(group => {
+            const allOn = group.types.every(t => typeFilters.includes(t))
+            return (
+              <label key={group.label} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={allOn}
+                  onChange={() => {
+                    setTypeFilters(prev => allOn
+                      ? prev.filter(t => !group.types.includes(t))
+                      : [...new Set([...prev, ...group.types])]
+                    )
+                    setPreset('custom')
+                  }}
+                />
+                {group.label}
+              </label>
+            )
+          })}
         </div>
         {memberAliases.length > 0 && (
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center', marginTop: '0.75rem' }}>
@@ -277,10 +312,31 @@ export default function AccountStatements({
       {/* Summary Cards */}
       <div className="summary-cards" style={{ marginBottom: '1.5rem' }}>
         <div className="summary-card">
-          <div className="summary-card-icon paid-icon">$</div>
+          <div
+            className="summary-card-icon"
+            style={{
+              background: accountBalance < 0 ? '#e53e3e22' : '#38a16922',
+              color: accountBalance < 0 ? 'var(--danger)' : 'var(--success)',
+            }}
+          >
+            B
+          </div>
           <div className="summary-card-info">
-            <p className="summary-card-label">Total</p>
-            <p className="summary-card-value">${totals.total.toLocaleString()}</p>
+            <p className="summary-card-label">Account Balance</p>
+            <p className="summary-card-value" style={{ color: accountBalance < 0 ? 'var(--danger)' : 'inherit' }}>
+              {accountBalance < 0 ? '-' : ''}${Math.abs(accountBalance).toLocaleString()}
+            </p>
+            <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+              {accountBalance < 0 ? 'Owes the synagogue' : accountBalance > 0 ? 'Credit toward future charges' : 'Account is current'}
+            </p>
+          </div>
+        </div>
+        <div className="summary-card">
+          <div className="summary-card-icon balance-icon">$</div>
+          <div className="summary-card-info">
+            <p className="summary-card-label">Account Credit</p>
+            <p className="summary-card-value">${accountCredit.toLocaleString()}</p>
+            <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Available prepaid funds</p>
           </div>
         </div>
         <div className="summary-card">
@@ -294,15 +350,8 @@ export default function AccountStatements({
         <div className="summary-card">
           <div className="summary-card-icon" style={{ background: '#38a16922', color: 'var(--success)' }}>D</div>
           <div className="summary-card-info">
-            <p className="summary-card-label">Donations</p>
-            <p className="summary-card-value">${totals.donation.toLocaleString()}</p>
-          </div>
-        </div>
-        <div className="summary-card">
-          <div className="summary-card-icon balance-icon">B</div>
-          <div className="summary-card-info">
-            <p className="summary-card-label">Account Credit</p>
-            <p className="summary-card-value">${(member.balance || 0).toLocaleString()}</p>
+            <p className="summary-card-label">Donations (filtered)</p>
+            <p className="summary-card-value">${totals.neutral.toLocaleString()}</p>
           </div>
         </div>
       </div>
@@ -328,30 +377,50 @@ export default function AccountStatements({
                 {memberAliases.length > 0 && <th>Paying As</th>}
                 <th>Type</th>
                 <th>Amount</th>
+                <th>Running Balance</th>
                 <th>Method</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={memberAliases.length > 0 ? 6 : 5} className="empty-row">No transactions found for this period</td></tr>
+                <tr><td colSpan={memberAliases.length > 0 ? 7 : 6} className="empty-row">No transactions found for this period</td></tr>
               ) : (
-                filtered.map((t, idx) => (
-                  <tr key={t.id || idx}>
-                    <td>{formatDate(t.date)}</td>
-                    <td>{t.description}</td>
-                    {memberAliases.length > 0 && <td style={{ fontSize: '0.82rem' }}>{t.alias || `${member.firstName} ${member.lastName}`}</td>}
-                    <td>{paymentTypeBadge(t.paymentType)}</td>
-                    <td className="amount-cell">${t.amount.toLocaleString()}</td>
-                    <td>{t.method}</td>
-                  </tr>
-                ))
-              )}
-              {filtered.length > 0 && (
-                <tr style={{ fontWeight: 600, background: 'var(--bg-warm)' }}>
-                  <td colSpan={memberAliases.length > 0 ? 4 : 3} style={{ textAlign: 'right' }}>Total</td>
-                  <td className="amount-cell">${totals.total.toLocaleString()}</td>
-                  <td></td>
-                </tr>
+                filtered.map((t, idx) => {
+                  const impact = t.balanceImpact
+                  const isNeutral = impact === 'neutral'
+                  const noteText = isNeutral ? neutralReason(t.paymentType) : ''
+                  const signedAmount = impact === 'charge' ? `-$${t.amount.toLocaleString()}` :
+                                       impact === 'payment' ? `+$${t.amount.toLocaleString()}` :
+                                       `$${t.amount.toLocaleString()}`
+                  const amountColor = impact === 'charge' ? 'var(--danger)' :
+                                      impact === 'payment' ? 'var(--success)' :
+                                      'var(--text)'
+                  const runningSigned = t.runningBalance < 0
+                    ? `-$${Math.abs(t.runningBalance).toLocaleString()}`
+                    : `$${t.runningBalance.toLocaleString()}`
+                  return (
+                    <tr key={t.id || idx}>
+                      <td>{formatDate(t.date)}</td>
+                      <td>
+                        {t.description}
+                        {noteText && (
+                          <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '2px' }}>
+                            {noteText}
+                          </div>
+                        )}
+                      </td>
+                      {memberAliases.length > 0 && (
+                        <td style={{ fontSize: '0.82rem' }}>{t.alias || `${member.firstName} ${member.lastName}`}</td>
+                      )}
+                      <td>{paymentTypeBadge(t.paymentType)}</td>
+                      <td className="amount-cell" style={{ color: amountColor, fontWeight: 600 }}>{signedAmount}</td>
+                      <td className="amount-cell" style={{ color: t.runningBalance < 0 ? 'var(--danger)' : 'var(--text-muted)' }}>
+                        {isNeutral ? '—' : runningSigned}
+                      </td>
+                      <td>{t.method}</td>
+                    </tr>
+                  )
+                })
               )}
             </tbody>
           </table>

@@ -150,17 +150,33 @@ export default function AdminTransactions({
     }
 
     try {
-      await api.createTransaction({
-        memberId: String(newTxn.memberId),
-        date: newTxn.date,
-        description: description || 'Transaction',
-        amount,
-        method: newTxn.method,
-        paymentType: newTxn.paymentType,
-        pledgeId: newTxn.pledgeId || '',
-        productId: newTxn.productId || '',
-        ...(newTxn.alias ? { alias: newTxn.alias } : {}),
-      })
+      // Purchases write a fee + payment pair (instant -$X / +$X) so the ledger
+      // reflects the obligation and its settlement at the moment of approval.
+      if (newTxn.paymentType === 'purchase') {
+        await api.createChargePaymentPair({
+          memberId: String(newTxn.memberId),
+          date: newTxn.date,
+          amount,
+          kind: 'purchase',
+          chargeDescription: description || 'Purchase',
+          paymentDescription: `${description || 'Purchase'} payment`,
+          method: newTxn.method,
+          productId: newTxn.productId || '',
+          ...(newTxn.alias ? { alias: newTxn.alias } : {}),
+        })
+      } else {
+        await api.createTransaction({
+          memberId: String(newTxn.memberId),
+          date: newTxn.date,
+          description: description || 'Transaction',
+          amount,
+          method: newTxn.method,
+          paymentType: newTxn.paymentType,
+          pledgeId: newTxn.pledgeId || '',
+          productId: newTxn.productId || '',
+          ...(newTxn.alias ? { alias: newTxn.alias } : {}),
+        })
+      }
 
       // Apply to member credit if checked
       if (newTxn.applyToCredit) {

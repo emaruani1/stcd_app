@@ -31,11 +31,16 @@ export const fetchMember = (id) => request(`/members/${id}`)
 export const createMember = (data) => request('/members', { method: 'POST', body: JSON.stringify(data) })
 export const updateMember = (id, data) => request(`/members/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 export const mergeMembers = (data) => request('/members/merge', { method: 'POST', body: JSON.stringify(data) })
+export const setAutopay = (id, { enabled, paymentMethodId }) =>
+  request(`/members/${id}/autopay`, { method: 'PUT', body: JSON.stringify({ enabled, paymentMethodId }) })
 
 // ===== TRANSACTIONS =====
 export const fetchAllTransactions = () => request('/transactions')
 export const fetchMemberTransactions = (memberId) => request(`/transactions/member/${memberId}`)
 export const createTransaction = (data) => request('/transactions', { method: 'POST', body: JSON.stringify(data) })
+// Writes a fee + payment pair atomically. Use for membership/sponsorship/purchase
+// after a successful Sola charge. `kind` is 'membership' | 'sponsorship' | 'purchase' | 'charge'.
+export const createChargePaymentPair = (data) => request('/transactions/pair', { method: 'POST', body: JSON.stringify(data) })
 export const updateTransaction = (data) => request('/transactions', { method: 'PUT', body: JSON.stringify(data) })
 export const deleteTransaction = (data) => request('/transactions', { method: 'DELETE', body: JSON.stringify(data) })
 

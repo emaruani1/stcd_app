@@ -160,15 +160,19 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
       })
     } catch (e) { console.error(e) }
 
-    // 4) Record the ledger transaction with full gateway metadata
+    // 4) Record the ledger as a sponsorship-fee + sponsorship-payment pair so the
+    //    Account Balance shows -$X then +$X (net 0) at the moment of approval.
     try {
-      await api.createTransaction({
+      const label = selectedOption.label
+      const dateLabel = formatDate(selectedDate.date)
+      await api.createChargePaymentPair({
         memberId: String(currentMemberId),
         date: now,
-        description: `${selectedOption.label} - ${formatDate(selectedDate.date)}`,
         amount: selectedOption.price,
+        kind: 'sponsorship',
+        chargeDescription: `${label} sponsorship — ${dateLabel}`,
+        paymentDescription: `${label} sponsorship payment — ${dateLabel}`,
         method: methodLabel,
-        paymentType: 'donation',
         category: sponsorType === 'kiddush' ? 'Kiddush' : 'Seuda Shelishit',
         balanceApplied: balancePortionUsed > 0 ? balancePortionUsed : 0,
         ...gw,

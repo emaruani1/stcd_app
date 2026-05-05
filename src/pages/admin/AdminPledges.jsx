@@ -200,14 +200,27 @@ export default function AdminPledges({
     }
 
     try {
-      await api.createTransaction({
-        memberId: String(newTxn.memberId),
-        date: newTxn.date,
-        description: description || 'Transaction',
-        amount,
-        method: newTxn.method,
-        paymentType: newTxn.paymentType,
-      })
+      if (newTxn.paymentType === 'purchase') {
+        await api.createChargePaymentPair({
+          memberId: String(newTxn.memberId),
+          date: newTxn.date,
+          amount,
+          kind: 'purchase',
+          chargeDescription: description || 'Purchase',
+          paymentDescription: `${description || 'Purchase'} payment`,
+          method: newTxn.method,
+          productId: newTxn.productId || '',
+        })
+      } else {
+        await api.createTransaction({
+          memberId: String(newTxn.memberId),
+          date: newTxn.date,
+          description: description || 'Transaction',
+          amount,
+          method: newTxn.method,
+          paymentType: newTxn.paymentType,
+        })
+      }
 
       if (newTxn.applyToCredit) {
         const member = allMembers.find(m => String(m.id) === String(newTxn.memberId))

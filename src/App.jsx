@@ -23,6 +23,7 @@ import AdminMemberEdit from './pages/admin/AdminMemberEdit'
 import AccountSecurity from './pages/AccountSecurity'
 import { logout, getCurrentSession } from './auth'
 import * as api from './api'
+import { computeAccountBalance } from './ledger'
 import './App.css'
 
 const defaultTemplates = {
@@ -114,6 +115,10 @@ function App() {
           paymentType: t.paymentType || '',
           groupId: t.groupId || '',
           productId: t.productId || '',
+          pledgeId: t.pledgeId || '',
+          pairId: t.pairId || '',
+          category: t.category || '',
+          alias: t.alias || '',
         })
       }
 
@@ -125,6 +130,10 @@ function App() {
         email: m.email || '',
         phone: m.phone || '',
         balance: Number(m.balance) || 0,
+        accountCredit: Number(m.balance) || 0,
+        accountBalance: computeAccountBalance(txnsByMember[m.memberId] || []),
+        autopayEnabled: !!m.autopayEnabled,
+        autopayPaymentMethodId: m.autopayPaymentMethodId || '',
         memberSince: m.memberSince || '',
         membershipType: m.membershipType || '',
         membershipPlan: m.membershipPlan || '',

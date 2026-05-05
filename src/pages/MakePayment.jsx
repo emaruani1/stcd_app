@@ -786,13 +786,16 @@ function MembershipJoinSection({ currentMemberId, refreshData, setPaySuccess, se
     if (!selectedPlan) return
     setProcessing(true)
     try {
-      await api.createTransaction({
+      // Membership join writes a fee + payment pair so the Account Balance
+      // shows -$X / +$X (net 0) at the moment of approval.
+      await api.createChargePaymentPair({
         memberId: String(currentMemberId),
         date: new Date().toISOString().split('T')[0],
-        description: `Membership - ${selectedPlan.label} Plan`,
         amount: selectedPlan.price,
+        kind: 'membership',
+        chargeDescription: `Membership — ${selectedPlan.label}`,
+        paymentDescription: `Membership payment — ${selectedPlan.label}`,
         method: 'Credit Card',
-        paymentType: 'donation',
         category: 'Membership',
       })
       setSuccessMessage(`Welcome! Your ${selectedPlan.label} membership ($${selectedPlan.price}/mo) has been submitted.`)
