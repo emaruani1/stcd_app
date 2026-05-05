@@ -79,4 +79,5 @@ export const createUser = (data) => request('/users/create', { method: 'POST', b
 export const disableUser = (email) => request('/users/disable', { method: 'POST', body: JSON.stringify({ email }) })
 export const enableUser = (email) => request('/users/enable', { method: 'POST', body: JSON.stringify({ email }) })
 export const resetUserPassword = (email) => request('/users/reset-password', { method: 'POST', body: JSON.stringify({ email }) })
+export const resendInvite = (email) => request('/users/resend-invite', { method: 'POST', body: JSON.stringify({ email }) })
 export const updateUserRole = (email, role) => request('/users/update-role', { method: 'POST', body: JSON.stringify({ email, role }) })

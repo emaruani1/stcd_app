@@ -28,6 +28,7 @@ export default function Layout({ children, onLogout, userRole, currentMember }) 
     { path: '/admin/birthdays', label: "Birthdays & B'nei Mitzvah", icon: '🎂' },
     { path: '/admin/emails', label: 'Email Center', icon: '📧' },
     { path: '/admin/settings', label: 'Settings', icon: '⚙️' },
+    { path: '/admin/security', label: 'Account Security', icon: '🔒' },
   ]
 
   const navItems = isAdmin ? adminNavItems : memberNavItems

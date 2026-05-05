@@ -198,6 +198,8 @@ def lambda_handler(event, context):
             return cognito_enable_user(parse_body(event))
         if path == '/users/reset-password' and method == 'POST':
             return cognito_reset_password(parse_body(event))
+        if path == '/users/resend-invite' and method == 'POST':
+            return cognito_resend_invite(parse_body(event))
         if path == '/users/update-role' and method == 'POST':
             return cognito_update_role(parse_body(event))
 
@@ -888,6 +890,32 @@ def cognito_reset_password(body):
     try:
         cognito.admin_reset_user_password(UserPoolId=COGNITO_POOL_ID, Username=username)
         return respond(200, {'message': 'Password reset email sent'})
+    except Exception as e:
+        return respond(500, {'error': str(e)})
+
+
+def cognito_resend_invite(body):
+    """Resend the welcome/invite email with a fresh temporary password.
+
+    Only valid for users still in FORCE_CHANGE_PASSWORD state. For users who
+    already set a permanent password, use cognito_reset_password instead.
+    """
+    email = body.get('email', '').strip().lower()
+    if not email:
+        return respond(400, {'error': 'email is required'})
+    username = _resolve_cognito_username(email)
+    if not username:
+        return respond(404, {'error': 'User not found'})
+    try:
+        cognito.admin_create_user(
+            UserPoolId=COGNITO_POOL_ID,
+            Username=username,
+            MessageAction='RESEND',
+            DesiredDeliveryMediums=['EMAIL'],
+        )
+        return respond(200, {'message': 'Invitation resent'})
+    except cognito.exceptions.UnsupportedUserStateException:
+        return respond(409, {'error': 'This user has already set a password. Use Reset Password instead.'})
     except Exception as e:
         return respond(500, {'error': str(e)})
 

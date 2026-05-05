@@ -148,6 +148,21 @@ export default function AdminMemberEdit({ allMembers, refreshData }) {
     }
   }
 
+  const handleResendInvite = async () => {
+    if (!member?.email) return
+    if (!confirm('Resend the welcome email with a fresh temporary password? The previous one will stop working.')) return
+    setCognitoAction('resending')
+    try {
+      await api.resendInvite(member.email)
+      setToast('Invitation email resent')
+      lookupCognitoUser()
+    } catch (err) {
+      setToast('Error: ' + err.message)
+    } finally {
+      setCognitoAction('')
+    }
+  }
+
   const handleRoleChange = async (newRole) => {
     if (!member?.email) return
     setCognitoAction('updatingRole')
@@ -431,6 +446,17 @@ export default function AdminMemberEdit({ allMembers, refreshData }) {
               </div>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+              {cognitoUser.status === 'FORCE_CHANGE_PASSWORD' && (
+                <button
+                  className="modal-btn-secondary"
+                  style={{ padding: '8px 18px' }}
+                  onClick={handleResendInvite}
+                  disabled={!!cognitoAction}
+                  title="Send a fresh welcome email with a new 24-hour temporary password"
+                >
+                  {cognitoAction === 'resending' ? 'Resending...' : 'Resend Invitation'}
+                </button>
+              )}
               <button
                 className="modal-btn-secondary"
                 style={{ padding: '8px 18px' }}

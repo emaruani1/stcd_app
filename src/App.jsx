@@ -20,6 +20,7 @@ import AdminSettings from './pages/admin/AdminSettings'
 import AdminTransactions from './pages/admin/AdminTransactions'
 import AdminMerge from './pages/admin/AdminMerge'
 import AdminMemberEdit from './pages/admin/AdminMemberEdit'
+import AccountSecurity from './pages/AccountSecurity'
 import { logout, getCurrentSession } from './auth'
 import * as api from './api'
 import './App.css'
@@ -494,6 +495,10 @@ function App() {
               />
             }
           />
+          <Route
+            path="/admin/security"
+            element={<AccountSecurity userRole="admin" />}
+          />
           <Route path="*" element={<Navigate to="/admin" replace />} />
         </Routes>
       </Layout>
@@ -602,6 +607,7 @@ function App() {
               currentMember={currentMember}
               profileData={profileData}
               setProfileData={setProfileData}
+              userRole={userRole}
             />
           }
         />

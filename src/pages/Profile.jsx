@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import AccountSecurity from './AccountSecurity'
 
 const HEBREW_MONTHS = [
   'Nisan', 'Iyyar', 'Sivan', 'Tammuz', 'Av', 'Elul',
@@ -16,7 +17,7 @@ const PARSHIYOT = [
 
 const emptyChild = () => ({ name: '', gender: '', date: '', useHebrew: false, hebrewDay: '', hebrewMonth: '', hebrewYear: '', parasha: '' })
 
-export default function Profile({ currentMember, profileData, setProfileData }) {
+export default function Profile({ currentMember, profileData, setProfileData, userRole }) {
   const [saveSuccess, setSaveSuccess] = useState(false)
 
   const [form, setForm] = useState(() => profileData || {
@@ -394,7 +395,7 @@ export default function Profile({ currentMember, profileData, setProfileData }) 
 
       {/* Children */}
       <div className="profile-section">
-        <h2 className="profile-section-title">Children's Birthdays</h2>
+        <h2 className="profile-section-title">Children&apos;s Birthdays</h2>
         <div className="dynamic-list">
           {form.children.map((c, idx) => (
             <div key={idx} className="dynamic-list-item">
@@ -452,6 +453,8 @@ export default function Profile({ currentMember, profileData, setProfileData }) 
           Save Profile
         </button>
       </div>
+
+      <AccountSecurity userRole={userRole} embedded />
     </div>
   )
 }
