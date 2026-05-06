@@ -501,9 +501,9 @@ function MembershipAutoPay({ currentMember }) {
     setLoading(true)
     try {
       await api.setAutopay(currentMember.id, { enabled, paymentMethodId: enabled ? paymentMethodId : '' })
-      setMsg({ kind: 'success', text: enabled ? 'Auto-pay turned on.' : 'Auto-pay turned off.' })
+      setMsg({ kind: 'success', text: enabled ? 'Preferred card saved.' : 'Preferred card cleared.' })
     } catch (e) {
-      setMsg({ kind: 'error', text: e.message || 'Could not update auto-pay.' })
+      setMsg({ kind: 'error', text: e.message || 'Could not update preferred card.' })
     } finally {
       setLoading(false)
     }
@@ -515,9 +515,9 @@ function MembershipAutoPay({ currentMember }) {
 
   return (
     <div className="profile-section">
-      <h2 className="profile-section-title">Membership Auto-Pay</h2>
+      <h2 className="profile-section-title">Membership Billing</h2>
       <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
-        On the 1st of each month, the synagogue charges your monthly membership fee. Turn on auto-pay to settle it automatically with a saved card; otherwise the fee will appear on your Account Balance until you pay it manually.
+        The synagogue posts a monthly membership fee on the 1st and runs payments shortly after. Pre-authorize a saved card here so we know which card to use when collecting your fee; you'll see the charge on your statement and a matching payment on your Account Balance.
       </p>
 
       {planLabel && (
@@ -543,11 +543,11 @@ function MembershipAutoPay({ currentMember }) {
               onChange={(e) => setEnabled(e.target.checked)}
               style={{ width: 'auto' }}
             />
-            <span>Enable monthly auto-pay</span>
+            <span>Pre-authorize a card for membership billing</span>
           </label>
         </div>
         <div className="form-group">
-          <label htmlFor="autopay-card">Card to charge</label>
+          <label htmlFor="autopay-card">Preferred card</label>
           <select
             id="autopay-card"
             value={paymentMethodId}

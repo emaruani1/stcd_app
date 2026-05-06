@@ -269,6 +269,8 @@ def lambda_handler(event, context):
             return get_member_transactions(member_id, event)
         if path == '/transactions/pair' and method == 'POST':
             return create_charge_payment_pair(parse_body(event))
+        if path == '/billing/charge-membership-fee' and method == 'POST':
+            return charge_membership_fee(parse_body(event))
         if path == '/transactions' and method == 'POST':
             return create_transaction(parse_body(event))
         if path.startswith('/transactions/') and method == 'PUT':
@@ -675,12 +677,145 @@ def _membership_pricing_from_settings():
         return []
 
 
+def charge_membership_fee(body):
+    """
+    Charge a single member's saved card to settle one outstanding membership-fee.
+    Body:
+      memberId, feeTransactionId, paymentMethodId, amount
+
+    Idempotency:
+      - If the fee already has a matching membership-payment row for the same
+        yearMonth, return 200 with already_paid=true. Caller should treat as success.
+      - On Sola decline, no payment row is written; returns 402 with gateway detail.
+      - On Sola approval, writes the membership-payment row sharing pairId with
+        an updated fee row so the two can be linked.
+    """
+    member_id = str(body.get('memberId') or '')
+    fee_txn_id = body.get('feeTransactionId') or ''
+    payment_method_id = body.get('paymentMethodId') or ''
+    amount_raw = body.get('amount')
+
+    if not member_id or not fee_txn_id or not payment_method_id or amount_raw is None:
+        return respond(400, {'error': 'memberId, feeTransactionId, paymentMethodId, amount are required'})
+    try:
+        amount = Decimal(str(amount_raw))
+    except Exception:
+        return respond(400, {'error': 'amount must be numeric'})
+    if amount <= 0:
+        return respond(400, {'error': 'amount must be > 0'})
+
+    # Fetch the fee txn to confirm it exists and is unpaid.
+    fee = transactions_table.get_item(Key={'memberId': member_id, 'transactionId': fee_txn_id}).get('Item')
+    if not fee or fee.get('paymentType') != 'membership-fee':
+        return respond(404, {'error': 'membership-fee transaction not found'})
+
+    fee_year_month = fee.get('yearMonth', '')
+    # If already paired, short-circuit.
+    if fee.get('pairId'):
+        for t in _all_member_transactions(member_id):
+            if t.get('paymentType') == 'membership-payment' and t.get('pairId') == fee.get('pairId'):
+                return respond(200, {
+                    'success': True,
+                    'alreadyPaid': True,
+                    'paymentTransactionId': t.get('transactionId'),
+                })
+    # If any membership-payment for the same yearMonth covers this amount, treat as paid.
+    same_month_payments = [
+        t for t in _all_member_transactions(member_id)
+        if t.get('paymentType') == 'membership-payment' and t.get('yearMonth') == fee_year_month
+    ]
+    if same_month_payments:
+        return respond(200, {
+            'success': True,
+            'alreadyPaid': True,
+            'paymentTransactionId': same_month_payments[0].get('transactionId'),
+        })
+
+    # Resolve member + payment method.
+    member = members_table.get_item(Key={'memberId': member_id}).get('Item')
+    if not member:
+        return respond(404, {'error': 'Member not found'})
+    pm_key = int(member_id) if member_id.isdigit() else member_id
+    pm = payment_methods_table.get_item(Key={
+        'memberId': pm_key,
+        'paymentMethodId': payment_method_id,
+    }).get('Item')
+    if not pm:
+        return respond(404, {'error': 'Saved card not found for this member'})
+
+    # Sola charge.
+    plan_label = f"{member.get('membershipType', '').capitalize()} {member.get('membershipPlan', '').capitalize()}".strip()
+    sola_payload = {
+        'xCommand': 'cc:sale',
+        'xAmount': f"{float(amount):.2f}",
+        'xToken': pm['xToken'],
+        'xDescription': f"STCD monthly membership ({plan_label})",
+        'xInvoice': fee_txn_id,
+    }
+    ok, resp = _sola_post(sola_payload)
+    if not ok:
+        return respond(402, {
+            'success': False,
+            'error': resp.get('xError', 'Charge declined'),
+            'errorCode': resp.get('xErrorCode'),
+            'gatewayRefNum': resp.get('xRefNum'),
+            'gatewayResult': resp.get('xResult'),
+        })
+
+    # Approval: write the matching membership-payment row, link to the fee via pairId.
+    pair_id = fee.get('pairId') or _make_pair_id()
+    today = time.strftime('%Y-%m-%d', time.gmtime())
+    payment_txn_id = f"TXN#{today}#{uuid.uuid4().hex[:8]}"
+    payment_txn = {
+        'memberId': member_id,
+        'transactionId': payment_txn_id,
+        'date': today,
+        'txnDate': today,
+        'yearMonth': fee_year_month or today[:7],
+        'description': fee.get('description', 'Membership payment').replace('Monthly membership', 'Monthly membership payment'),
+        'amount': amount,
+        'paymentType': 'membership-payment',
+        'category': 'Membership',
+        'method': 'Card on file (admin batch)',
+        'pairId': pair_id,
+        'paymentMethodId': payment_method_id,
+        'cardLast4': pm.get('last4', ''),
+        'cardBrand': pm.get('cardBrand', ''),
+        'gatewayRefNum': resp.get('xRefNum', ''),
+        'gatewayAuthCode': resp.get('xAuthCode', ''),
+        'gatewayResult': resp.get('xResult', ''),
+        'gatewayStatus': resp.get('xStatus', ''),
+    }
+    payment_txn = {k: v for k, v in payment_txn.items() if v not in ('', None)}
+    transactions_table.put_item(Item=payment_txn)
+
+    # Stamp pairId onto the fee so future runs short-circuit cleanly.
+    if not fee.get('pairId'):
+        try:
+            transactions_table.update_item(
+                Key={'memberId': member_id, 'transactionId': fee_txn_id},
+                UpdateExpression='SET pairId = :p',
+                ExpressionAttributeValues={':p': pair_id},
+            )
+        except Exception as e:
+            print(f"[billing] could not stamp pairId on fee {fee_txn_id}: {e}")
+
+    return respond(200, {
+        'success': True,
+        'alreadyPaid': False,
+        'gatewayRefNum': resp.get('xRefNum'),
+        'authCode': resp.get('xAuthCode'),
+        'paymentTransactionId': payment_txn_id,
+        'cardLast4': pm.get('last4', ''),
+        'cardBrand': pm.get('cardBrand', ''),
+    })
+
+
 def run_monthly_membership_billing():
     """
-    Idempotent monthly tick. For every member with a membershipType+plan:
-      - Skip if a membership-fee for the current month already exists.
-      - If autopay+paymentMethod: charge via Sola; on success write fee+payment pair.
-      - Else: write only the fee charge (no email reminder yet — SES not set up).
+    Idempotent monthly tick. Creates a membership-fee charge row for each
+    member with an active plan. Admin runs the matching payments later from
+    the Membership Billing admin page.
     """
     today = time.strftime('%Y-%m-%d', time.gmtime())
     year_month = today[:7]
@@ -692,8 +827,7 @@ def run_monthly_membership_billing():
         res = members_table.scan(ExclusiveStartKey=res['LastEvaluatedKey'])
         members.extend(res.get('Items', []))
 
-    summary = {'processed': 0, 'autopay_succeeded': 0, 'autopay_failed': 0,
-               'fee_only': 0, 'skipped_already_billed': 0, 'skipped_no_plan': 0}
+    summary = {'fees_created': 0, 'skipped_already_billed': 0, 'skipped_no_plan': 0}
 
     for m in members:
         mtype = m.get('membershipType', '')
@@ -708,77 +842,28 @@ def run_monthly_membership_billing():
             continue
 
         member_id = str(m['memberId'])
-        # Idempotency: any membership-fee txn this month?
-        existing_this_month = False
-        for t in _all_member_transactions(member_id):
-            if t.get('paymentType') == 'membership-fee' and t.get('yearMonth') == year_month:
-                existing_this_month = True
-                break
-        if existing_this_month:
+        already_billed = any(
+            t.get('paymentType') == 'membership-fee' and t.get('yearMonth') == year_month
+            for t in _all_member_transactions(member_id)
+        )
+        if already_billed:
             summary['skipped_already_billed'] += 1
             continue
 
-        summary['processed'] += 1
-        autopay = bool(m.get('autopayEnabled'))
-        pm_id = m.get('autopayPaymentMethodId', '')
-        charge_succeeded = False
-        gw_meta = {}
-
-        if autopay and pm_id:
-            pm = payment_methods_table.get_item(Key={
-                'memberId': int(member_id) if member_id.isdigit() else member_id,
-                'paymentMethodId': pm_id,
-            }).get('Item')
-            if pm:
-                payload = {
-                    'xCommand': 'cc:sale',
-                    'xAmount': f"{float(amount):.2f}",
-                    'xToken': pm['xToken'],
-                    'xDescription': f"STCD monthly membership ({plan})",
-                }
-                ok, resp = _sola_post(payload)
-                if ok:
-                    charge_succeeded = True
-                    gw_meta = {
-                        'paymentMethodId': pm_id,
-                        'cardLast4': pm.get('last4', ''),
-                        'cardBrand': pm.get('cardBrand', ''),
-                        'gatewayRefNum': resp.get('xRefNum', ''),
-                        'gatewayAuthCode': resp.get('xAuthCode', ''),
-                        'gatewayResult': resp.get('xResult', ''),
-                        'gatewayStatus': resp.get('xStatus', ''),
-                    }
-
         plan_label = f"{mtype.capitalize()} {plan.capitalize()}"
-        if charge_succeeded:
-            _write_charge_payment_pair(
-                member_id, today, amount,
-                'membership-fee', 'membership-payment',
-                f"Monthly membership — {plan_label}",
-                f"Monthly membership payment — {plan_label}",
-                category='Membership',
-                method='Auto-Pay (card on file)',
-                **gw_meta,
-            )
-            summary['autopay_succeeded'] += 1
-        else:
-            # Write only the fee row. Member sees -$X on Account Balance until they pay.
-            charge_txn = {
-                'memberId': member_id,
-                'transactionId': f"TXN#{today}#{uuid.uuid4().hex[:8]}",
-                'date': today,
-                'txnDate': today,
-                'yearMonth': year_month,
-                'description': f"Monthly membership — {plan_label}",
-                'amount': amount,
-                'paymentType': 'membership-fee',
-                'category': 'Membership',
-            }
-            transactions_table.put_item(Item=charge_txn)
-            if autopay and pm_id:
-                summary['autopay_failed'] += 1
-            else:
-                summary['fee_only'] += 1
+        charge_txn = {
+            'memberId': member_id,
+            'transactionId': f"TXN#{today}#{uuid.uuid4().hex[:8]}",
+            'date': today,
+            'txnDate': today,
+            'yearMonth': year_month,
+            'description': f"Monthly membership — {plan_label}",
+            'amount': amount,
+            'paymentType': 'membership-fee',
+            'category': 'Membership',
+        }
+        transactions_table.put_item(Item=charge_txn)
+        summary['fees_created'] += 1
 
     print(f"[monthly billing] {summary}")
     return {'statusCode': 200, 'body': json.dumps(summary)}

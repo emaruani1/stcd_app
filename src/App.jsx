@@ -20,6 +20,7 @@ import AdminSettings from './pages/admin/AdminSettings'
 import AdminTransactions from './pages/admin/AdminTransactions'
 import AdminMerge from './pages/admin/AdminMerge'
 import AdminMemberEdit from './pages/admin/AdminMemberEdit'
+import AdminMembershipBilling from './pages/admin/AdminMembershipBilling'
 import AccountSecurity from './pages/AccountSecurity'
 import { logout, getCurrentSession } from './auth'
 import * as api from './api'
@@ -503,6 +504,10 @@ function App() {
                 isAdmin={true}
               />
             }
+          />
+          <Route
+            path="/admin/billing"
+            element={<AdminMembershipBilling allMembers={allMembers} refreshData={refreshData} />}
           />
           <Route
             path="/admin/security"

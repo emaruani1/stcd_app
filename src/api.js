@@ -78,6 +78,11 @@ export const deletePaymentMethod = (data) =>
 export const chargeSavedCard = (data) =>
   request('/charge', { method: 'POST', body: JSON.stringify(data) })
 
+// ===== BILLING =====
+// Per-member, called in a loop by the admin Membership Billing page.
+export const chargeMembershipFee = (data) =>
+  request('/billing/charge-membership-fee', { method: 'POST', body: JSON.stringify(data) })
+
 // ===== COGNITO USER MANAGEMENT =====
 export const lookupUser = (email) => request('/users/lookup', { method: 'POST', body: JSON.stringify({ email }) })
 export const createUser = (data) => request('/users/create', { method: 'POST', body: JSON.stringify(data) })
