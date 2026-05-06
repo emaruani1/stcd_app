@@ -220,9 +220,14 @@ def _write_charge_payment_pair(member_id, date, amount, charge_type, payment_typ
 
 
 def _membership_monthly_amount(membership_type, membership_plan, settings_pricing=None):
-    """Look up monthly fee for a (type, plan) combination."""
+    """Look up monthly fee. Settings format: [{id, label, price}, ...] keyed on plan id.
+    Falls back to legacy {type,plan,price} format, then to DEFAULT_MEMBERSHIP_PRICING."""
     if settings_pricing:
         for entry in settings_pricing:
+            # New simple format: id == plan
+            if entry.get('id') == membership_plan and 'price' in entry:
+                return Decimal(str(entry.get('price', 0)))
+            # Legacy structured format
             if entry.get('type') == membership_type and entry.get('plan') == membership_plan:
                 return Decimal(str(entry.get('price', 0)))
     return Decimal(str(DEFAULT_MEMBERSHIP_PRICING.get((membership_type, membership_plan), 0)))
@@ -668,11 +673,17 @@ def set_member_autopay(member_id, body):
 
 
 def _membership_pricing_from_settings():
-    """Read settings.membershipPricing if present. Returns list of {type, plan, price}."""
+    """Read settings.membershipPlans first; fall back to legacy membershipPricing key."""
+    try:
+        res = settings_table.get_item(Key={'settingKey': 'membershipPlans'})
+        items = res.get('Item', {}).get('items', [])
+        if items:
+            return items
+    except Exception:
+        pass
     try:
         res = settings_table.get_item(Key={'settingKey': 'membershipPricing'})
-        items = res.get('Item', {}).get('items', [])
-        return items
+        return res.get('Item', {}).get('items', [])
     except Exception:
         return []
 
@@ -836,7 +847,18 @@ def run_monthly_membership_billing():
             summary['skipped_no_plan'] += 1
             continue
 
-        amount = _membership_monthly_amount(mtype, plan, pricing)
+        # Per-member override beats the plan price. Convention: 0 or blank
+        # override means "use the plan price"; >0 means custom monthly rate.
+        override_raw = m.get('membershipPriceOverride')
+        override_val = None
+        if override_raw is not None and str(override_raw) != '':
+            try:
+                v = Decimal(str(override_raw))
+                if v > 0:
+                    override_val = v
+            except Exception:
+                pass
+        amount = override_val if override_val is not None else _membership_monthly_amount(mtype, plan, pricing)
         if amount <= 0:
             summary['skipped_no_plan'] += 1
             continue
@@ -850,14 +872,16 @@ def run_monthly_membership_billing():
             summary['skipped_already_billed'] += 1
             continue
 
-        plan_label = f"{mtype.capitalize()} {plan.capitalize()}"
+        plan_label = plan.capitalize()
+        is_override = override_val is not None
+        description = f"Monthly membership — {plan_label}" + (' (custom rate)' if is_override else '')
         charge_txn = {
             'memberId': member_id,
             'transactionId': f"TXN#{today}#{uuid.uuid4().hex[:8]}",
             'date': today,
             'txnDate': today,
             'yearMonth': year_month,
-            'description': f"Monthly membership — {plan_label}",
+            'description': description,
             'amount': amount,
             'paymentType': 'membership-fee',
             'category': 'Membership',

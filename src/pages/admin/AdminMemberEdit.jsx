@@ -18,7 +18,7 @@ const PARSHIYOT = [
 const emptyYahrzeit = () => ({ name: '', gender: '', relationship: '', date: '', useHebrew: false, hebrewDay: '', hebrewMonth: '', hebrewYear: '' })
 const emptyChild = () => ({ name: '', gender: '', dob: '', useHebrew: false, hebrewDay: '', hebrewMonth: '', hebrewYear: '', parasha: '', barBatMitzvahDate: '' })
 
-export default function AdminMemberEdit({ allMembers, refreshData }) {
+export default function AdminMemberEdit({ allMembers, refreshData, membershipPlans = [] }) {
   const { memberId } = useParams()
   const navigate = useNavigate()
   const member = allMembers.find(m => String(m.id) === String(memberId))
@@ -61,6 +61,9 @@ export default function AdminMemberEdit({ allMembers, refreshData }) {
         contactType: member.contactType || '',
         membershipType: member.membershipType || '',
         membershipPlan: member.membershipPlan || '',
+        membershipPriceOverride: member.membershipPriceOverride === undefined || member.membershipPriceOverride === null
+          ? ''
+          : String(member.membershipPriceOverride),
         memberSince: member.memberSince || '',
         formalSalutation: member.formalSalutation || '',
         dearWho: member.dearWho || '',
@@ -223,6 +226,20 @@ export default function AdminMemberEdit({ allMembers, refreshData }) {
       for (const key of simpleFields) {
         if (form[key] !== originalForm[key]) {
           changes[key] = form[key]
+        }
+      }
+
+      // membershipPriceOverride: numeric > 0 means custom monthly rate.
+      // 0 or blank means "use the plan price" (we send 0 to clear).
+      if (form.membershipPriceOverride !== originalForm.membershipPriceOverride) {
+        const v = (form.membershipPriceOverride ?? '').toString().trim()
+        if (v === '') {
+          changes.membershipPriceOverride = 0
+        } else {
+          const num = Number(v)
+          if (!Number.isNaN(num) && num >= 0) {
+            changes.membershipPriceOverride = num
+          }
         }
       }
 
@@ -605,14 +622,55 @@ export default function AdminMemberEdit({ allMembers, refreshData }) {
             <label>Membership Plan</label>
             <select value={form.membershipPlan} onChange={e => updateField('membershipPlan', e.target.value)}>
               <option value="">—</option>
-              <option value="single">Single</option>
-              <option value="couple">Couple</option>
-              <option value="family">Family</option>
+              {membershipPlans.map(p => (
+                <option key={p.id} value={p.id}>{p.label} (${p.price}/mo)</option>
+              ))}
             </select>
           </div>
           <div className="form-group">
             <label>Member Since</label>
             <input type="date" value={form.memberSince} onChange={e => updateField('memberSince', e.target.value)} />
+          </div>
+          <div className="form-group full-width" style={{ background: 'var(--bg-warm)', padding: '12px 14px', borderRadius: 'var(--radius-sm)' }}>
+            <label>Custom Monthly Rate (override)</label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <span style={{ color: 'var(--text-muted)' }}>$</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.membershipPriceOverride}
+                onChange={e => updateField('membershipPriceOverride', e.target.value)}
+                placeholder={(() => {
+                  const plan = membershipPlans.find(p => p.id === form.membershipPlan)
+                  return plan ? `${plan.price} (plan price)` : 'plan price'
+                })()}
+                style={{ flex: 1 }}
+              />
+              {form.membershipPriceOverride && (
+                <button
+                  type="button"
+                  className="modal-btn-secondary"
+                  style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                  onClick={() => updateField('membershipPriceOverride', '')}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '6px', marginBottom: 0 }}>
+              Leave blank (or 0) to use the plan price. Set a value to bill this member that exact amount each month.
+              {form.membershipPriceOverride && form.membershipPlan && (
+                <>
+                  {' '}Currently <strong>${Number(form.membershipPriceOverride).toLocaleString()}</strong>/mo
+                  {(() => {
+                    const plan = membershipPlans.find(p => p.id === form.membershipPlan)
+                    return plan ? <> instead of <strong>${plan.price}</strong>/mo plan price</> : null
+                  })()}
+                  .
+                </>
+              )}
+            </p>
           </div>
         </div>
       </div>

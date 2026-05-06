@@ -7,6 +7,7 @@ export default function AdminSettings({
   products, setProducts,
   kiddushPricing, setKiddushPricing,
   seudaPricing, setSeudaPricing,
+  membershipPlans, setMembershipPlans,
 }) {
   const [activeTab, setActiveTab] = useState('pledgeTypes')
   const [toast, setToast] = useState('')
@@ -40,6 +41,7 @@ export default function AdminSettings({
     { key: 'paymentMethods', label: 'Payment Methods' },
     { key: 'products', label: 'Products' },
     { key: 'sponsorship', label: 'Sponsorship Pricing' },
+    { key: 'membership', label: 'Membership Plans' },
   ]
 
   // ===== PLEDGE TYPES =====
@@ -222,6 +224,42 @@ export default function AdminSettings({
     setSeudaPricing(prev => prev.map(s =>
       s.id === id ? { ...s, price: parseFloat(price) || 0 } : s
     ))
+  }
+
+  // ===== MEMBERSHIP PLANS =====
+  const updateMembershipPrice = (id, price) => {
+    setMembershipPlans(prev => prev.map(p =>
+      p.id === id ? { ...p, price: parseFloat(price) || 0 } : p
+    ))
+  }
+
+  const updateMembershipLabel = (id, label) => {
+    setMembershipPlans(prev => prev.map(p =>
+      p.id === id ? { ...p, label } : p
+    ))
+  }
+
+  const updateMembershipDescription = (id, description) => {
+    setMembershipPlans(prev => prev.map(p =>
+      p.id === id ? { ...p, description } : p
+    ))
+  }
+
+  const startAddMembershipPlan = () => {
+    const id = prompt('New plan id (e.g. "associate-single") — letters, numbers, hyphens only:')
+    if (!id) return
+    const cleanId = id.trim().toLowerCase().replace(/\s+/g, '-')
+    if (membershipPlans.some(p => p.id === cleanId)) {
+      showToast('A plan with that id already exists')
+      return
+    }
+    setMembershipPlans(prev => [...prev, { id: cleanId, label: id.trim(), price: 0, description: '' }])
+  }
+
+  const deleteMembershipPlan = (id) => {
+    if (!confirm(`Delete the "${id}" plan? Members on this plan will keep their plan ID but base lookups will fall through to defaults.`)) return
+    setMembershipPlans(prev => prev.filter(p => p.id !== id))
+    showToast('Plan deleted')
   }
 
   return (
@@ -483,6 +521,53 @@ export default function AdminSettings({
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* ===== MEMBERSHIP PLANS TAB ===== */}
+      {activeTab === 'membership' && (
+        <div className="dashboard-section">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <h2 className="section-title" style={{ margin: 0 }}>Membership Plans</h2>
+            <button className="pay-btn" style={{ padding: '8px 16px', fontSize: '0.85rem' }} onClick={startAddMembershipPlan}>
+              + Add Plan
+            </button>
+          </div>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginTop: 0, marginBottom: '1rem' }}>
+            These prices show on the &quot;Become a Member&quot; panel and drive the monthly billing fee posted on the 1st of each month.
+            To override the price for an individual member (e.g. financial hardship), edit that member directly.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
+            {(membershipPlans || []).map(p => (
+              <div key={p.id} style={{ background: 'var(--bg-warm)', padding: '1rem', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <code style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{p.id}</code>
+                  <button
+                    className="action-btn action-btn-delete"
+                    onClick={() => deleteMembershipPlan(p.id)}
+                    style={{ fontSize: '0.7rem' }}
+                  >
+                    Delete
+                  </button>
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Label</label>
+                  <input type="text" value={p.label} onChange={e => updateMembershipLabel(p.id, e.target.value)} />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Monthly Price ($)</label>
+                  <input type="number" min="0" step="0.01" value={p.price} onChange={e => updateMembershipPrice(p.id, e.target.value)} />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Description</label>
+                  <input type="text" value={p.description || ''} onChange={e => updateMembershipDescription(p.id, e.target.value)} placeholder="optional" />
+                </div>
+              </div>
+            ))}
+            {(!membershipPlans || membershipPlans.length === 0) && (
+              <p style={{ color: 'var(--text-muted)' }}>No plans yet — click &quot;Add Plan&quot; to create one.</p>
+            )}
           </div>
         </div>
       )}

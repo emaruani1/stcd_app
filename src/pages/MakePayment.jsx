@@ -3,13 +3,14 @@ import { useSearchParams } from 'react-router-dom'
 import * as api from '../api'
 import PaymentChooser from '../components/PaymentChooser'
 
-const MEMBERSHIP_PLANS = [
-  { id: 'single', label: 'Single', price: 100 },
-  { id: 'couple', label: 'Couple', price: 150 },
-  { id: 'family', label: 'Family', price: 180 },
+const FALLBACK_PLANS = [
+  { id: 'single', label: 'Single', price: 100, description: '1 person' },
+  { id: 'couple', label: 'Couple', price: 150, description: '2 people' },
+  { id: 'family', label: 'Family', price: 180, description: 'Family' },
 ]
 
-export default function MakePayment({ currentMember, pledgePayments, setPledgePayments, extraPayments, setExtraPayments, currentBalance, setMemberBalances, currentMemberId, refreshData }) {
+export default function MakePayment({ currentMember, pledgePayments, setPledgePayments, extraPayments, setExtraPayments, currentBalance, setMemberBalances, currentMemberId, refreshData, membershipPlans }) {
+  const plansToShow = (membershipPlans && membershipPlans.length > 0) ? membershipPlans : FALLBACK_PLANS
   const [searchParams] = useSearchParams()
   const showJoin = searchParams.get('join') === 'true'
 
@@ -413,6 +414,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
           refreshData={refreshData}
           setPaySuccess={setPaySuccess}
           setSuccessMessage={setSuccessMessage}
+          plans={plansToShow}
         />
       )}
 
@@ -778,7 +780,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
   )
 }
 
-function MembershipJoinSection({ currentMemberId, refreshData, setPaySuccess, setSuccessMessage }) {
+function MembershipJoinSection({ currentMemberId, refreshData, setPaySuccess, setSuccessMessage, plans }) {
   const [selectedPlan, setSelectedPlan] = useState(null)
   const [processing, setProcessing] = useState(false)
 
@@ -823,7 +825,7 @@ function MembershipJoinSection({ currentMemberId, refreshData, setPaySuccess, se
         Support the Sephardic Torah Center of Dallas with a monthly membership. Choose a plan that fits your household:
       </p>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-        {MEMBERSHIP_PLANS.map(plan => (
+        {plans.map(plan => (
           <div
             key={plan.id}
             onClick={() => setSelectedPlan(plan)}

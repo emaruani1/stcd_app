@@ -1,7 +1,7 @@
 import { membershipTiers } from '../data/fakeData'
 import { useNavigate } from 'react-router-dom'
 
-export default function Dashboard({ currentMember, pledgePayments, extraPayments, currentBalance }) {
+export default function Dashboard({ currentMember, pledgePayments, extraPayments, currentBalance, membershipPlans }) {
   const navigate = useNavigate()
 
   const memberPledges = currentMember.pledges
@@ -97,9 +97,11 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
           </div>
           <div className="membership-banner-right" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
             <div style={{ fontSize: '0.82rem', color: 'rgba(255,255,255,0.85)', textAlign: 'right' }}>
-              <p style={{ margin: '0 0 2px' }}>Single: $100/mo</p>
-              <p style={{ margin: '0 0 2px' }}>Couple: $150/mo</p>
-              <p style={{ margin: 0 }}>Family: $180/mo</p>
+              {(membershipPlans || []).map((p, idx, arr) => (
+                <p key={p.id} style={{ margin: idx === arr.length - 1 ? 0 : '0 0 2px' }}>
+                  {p.label}: ${p.price}/mo
+                </p>
+              ))}
             </div>
             <button
               className="pay-btn"

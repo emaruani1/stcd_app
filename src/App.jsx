@@ -49,6 +49,11 @@ function App() {
   const [products, setProducts] = useState([])
   const [kiddushPricing, setKiddushPricing] = useState([])
   const [seudaPricing, setSeudaPricing] = useState([])
+  const [membershipPlans, setMembershipPlans] = useState([
+    { id: 'single', label: 'Single', price: 100, description: '1 person' },
+    { id: 'couple', label: 'Couple', price: 150, description: '2 people' },
+    { id: 'family', label: 'Family', price: 180, description: 'Family' },
+  ])
 
   // State from API
   const [blockedDatesState, setBlockedDatesState] = useState([])
@@ -144,6 +149,8 @@ function App() {
         memberSince: m.memberSince || '',
         membershipType: m.membershipType || '',
         membershipPlan: m.membershipPlan || '',
+        membershipPriceOverride: m.membershipPriceOverride === undefined || m.membershipPriceOverride === null
+          ? null : Number(m.membershipPriceOverride),
         gender: m.gender || '',
         address: m.address || '',
         addressLine2: m.addressLine2 || '',
@@ -181,6 +188,9 @@ function App() {
       if (settingsData.products) setProducts(settingsData.products.map(p => ({ ...p, price: Number(p.price) || 0 })))
       if (settingsData.kiddushPricing) setKiddushPricing(settingsData.kiddushPricing.map(p => ({ ...p, price: Number(p.price) || 0 })))
       if (settingsData.seudaPricing) setSeudaPricing(settingsData.seudaPricing.map(p => ({ ...p, price: Number(p.price) || 0 })))
+      if (settingsData.membershipPlans && settingsData.membershipPlans.length > 0) {
+        setMembershipPlans(settingsData.membershipPlans.map(p => ({ ...p, price: Number(p.price) || 0 })))
+      }
       if (settingsData.blockedDates) setBlockedDatesState(settingsData.blockedDates)
       if (settingsData.emailTemplates) setTemplates(settingsData.emailTemplates)
 
@@ -312,6 +322,11 @@ function App() {
     const newVal = typeof updater === 'function' ? updater(seudaPricing) : updater
     setSeudaPricing(newVal)
     try { await api.updateSetting('seudaPricing', newVal.map(p => ({ ...p, price: String(p.price) }))) } catch (e) { console.error(e) }
+  }
+  const setMembershipPlansAndSync = async (updater) => {
+    const newVal = typeof updater === 'function' ? updater(membershipPlans) : updater
+    setMembershipPlans(newVal)
+    try { await api.updateSetting('membershipPlans', newVal.map(p => ({ ...p, price: String(p.price) }))) } catch (e) { console.error(e) }
   }
 
   // Blocked dates sync
@@ -468,6 +483,8 @@ function App() {
                 setKiddushPricing={setKiddushPricingAndSync}
                 seudaPricing={seudaPricing}
                 setSeudaPricing={setSeudaPricingAndSync}
+                membershipPlans={membershipPlans}
+                setMembershipPlans={setMembershipPlansAndSync}
               />
             }
           />
@@ -505,6 +522,7 @@ function App() {
               <AdminMemberEdit
                 allMembers={allMembers}
                 refreshData={refreshData}
+                membershipPlans={membershipPlans}
               />
             }
           />
@@ -576,6 +594,7 @@ function App() {
               pledgePayments={pledgePayments}
               extraPayments={extraPayments}
               currentBalance={currentBalance}
+              membershipPlans={membershipPlans}
             />
           }
         />
@@ -603,6 +622,7 @@ function App() {
               setMemberBalances={setMemberBalances}
               currentMemberId={currentMemberId}
               refreshData={refreshData}
+              membershipPlans={membershipPlans}
             />
           }
         />
