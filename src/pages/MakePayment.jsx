@@ -786,17 +786,24 @@ function MembershipJoinSection({ currentMemberId, refreshData, setPaySuccess, se
     if (!selectedPlan) return
     setProcessing(true)
     try {
+      const today = new Date().toISOString().split('T')[0]
       // Membership join writes a fee + payment pair so the Account Balance
       // shows -$X / +$X (net 0) at the moment of approval.
       await api.createChargePaymentPair({
         memberId: String(currentMemberId),
-        date: new Date().toISOString().split('T')[0],
+        date: today,
         amount: selectedPlan.price,
         kind: 'membership',
         chargeDescription: `Membership — ${selectedPlan.label}`,
         paymentDescription: `Membership payment — ${selectedPlan.label}`,
         method: 'Credit Card',
         category: 'Membership',
+      })
+      // Persist membership selection on the member so the monthly cron picks them up.
+      await api.updateMember(String(currentMemberId), {
+        membershipType: 'full',
+        membershipPlan: selectedPlan.id,
+        memberSince: today,
       })
       setSuccessMessage(`Welcome! Your ${selectedPlan.label} membership ($${selectedPlan.price}/mo) has been submitted.`)
       setPaySuccess(true)
