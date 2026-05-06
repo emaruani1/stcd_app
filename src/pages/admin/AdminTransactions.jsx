@@ -331,13 +331,15 @@ export default function AdminTransactions({
                 <th>Type</th>
                 <th>Amount</th>
                 <th>Method</th>
+                <th>Gateway Ref</th>
+                <th>Auth</th>
                 <th>Status</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan="10" className="empty-row">No transactions found</td></tr>
+                <tr><td colSpan="12" className="empty-row">No transactions found</td></tr>
               ) : (
                 filtered.map((t, idx) => {
                   const status = deriveStatus(t)
@@ -358,12 +360,6 @@ export default function AdminTransactions({
                             {t.gatewayError}{t.gatewayErrorCode ? ` (${t.gatewayErrorCode})` : ''}
                           </div>
                         )}
-                        {t.gatewayRefNum && (
-                          <div style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: 2 }}>
-                            ref {t.gatewayRefNum}
-                            {t.gatewayAuthCode ? ` · auth ${t.gatewayAuthCode}` : ''}
-                          </div>
-                        )}
                       </td>
                       <td style={{ fontSize: '0.82rem' }}>{t.alias || '—'}</td>
                       <td style={{ fontSize: '0.82rem' }}>{t.productName || t.productId || '—'}</td>
@@ -372,6 +368,12 @@ export default function AdminTransactions({
                       <td>
                         {t.method}
                         {cardSuffix && <span style={{ color: '#6b7280', fontSize: '0.78rem' }}>{cardSuffix}</span>}
+                      </td>
+                      <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                        {t.gatewayRefNum || '—'}
+                      </td>
+                      <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                        {t.gatewayAuthCode || '—'}
                       </td>
                       <td>{statusBadge(status)}</td>
                       <td>

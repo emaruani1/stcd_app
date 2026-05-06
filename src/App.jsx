@@ -120,6 +120,12 @@ function App() {
           pairId: t.pairId || '',
           category: t.category || '',
           alias: t.alias || '',
+          cardLast4: t.cardLast4 || '',
+          cardBrand: t.cardBrand || '',
+          gatewayRefNum: t.gatewayRefNum || '',
+          gatewayAuthCode: t.gatewayAuthCode || '',
+          gatewayResult: t.gatewayResult || '',
+          gatewayStatus: t.gatewayStatus || '',
         })
       }
 
@@ -261,6 +267,14 @@ function App() {
       amount: Number(t.amount) || 0,
       method: t.method || t.source || '',
       paymentType: t.paymentType || '',
+      cardLast4: t.cardLast4 || '',
+      cardBrand: t.cardBrand || '',
+      gatewayRefNum: t.gatewayRefNum || '',
+      gatewayAuthCode: t.gatewayAuthCode || '',
+      gatewayResult: t.gatewayResult || '',
+      gatewayStatus: t.gatewayStatus || '',
+      gatewayError: t.gatewayError || '',
+      gatewayErrorCode: t.gatewayErrorCode || '',
     }))
 
   const getTransactionsForMember = (memberId) => {

@@ -379,11 +379,13 @@ export default function AccountStatements({
                 <th>Amount</th>
                 <th>Running Balance</th>
                 <th>Method</th>
+                <th>Gateway Ref</th>
+                <th>Auth</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={memberAliases.length > 0 ? 7 : 6} className="empty-row">No transactions found for this period</td></tr>
+                <tr><td colSpan={memberAliases.length > 0 ? 9 : 8} className="empty-row">No transactions found for this period</td></tr>
               ) : (
                 filtered.map((t, idx) => {
                   const impact = t.balanceImpact
@@ -418,6 +420,12 @@ export default function AccountStatements({
                         {isNeutral ? '—' : runningSigned}
                       </td>
                       <td>{t.method}</td>
+                      <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                        {t.gatewayRefNum || '—'}
+                      </td>
+                      <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                        {t.gatewayAuthCode || '—'}
+                      </td>
                     </tr>
                   )
                 })

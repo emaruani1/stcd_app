@@ -229,11 +229,13 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                   <th>Type</th>
                   <th>Amount</th>
                   <th>Method</th>
+                  <th>Gateway Ref</th>
+                  <th>Auth</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredPayments.length === 0 ? (
-                  <tr><td colSpan={memberAliases.length > 0 ? 6 : 5} className="empty-row">No payments found for this period</td></tr>
+                  <tr><td colSpan={memberAliases.length > 0 ? 8 : 7} className="empty-row">No payments found for this period</td></tr>
                 ) : (
                   filteredPayments.map((p, idx) => {
                     const impact = p.balanceImpact ?? balanceImpact(p.paymentType)
@@ -258,6 +260,12 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                           {sign}${p.amount.toLocaleString()}
                         </td>
                         <td>{p.method}</td>
+                        <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                          {p.gatewayRefNum || '—'}
+                        </td>
+                        <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                          {p.gatewayAuthCode || '—'}
+                        </td>
                       </tr>
                     )
                   })
@@ -289,11 +297,13 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                   <th style={{ textAlign: 'right' }}>Charges</th>
                   <th style={{ textAlign: 'right' }}>Payments</th>
                   <th style={{ textAlign: 'right' }}>Balance</th>
+                  <th>Gateway Ref</th>
+                  <th>Auth</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredLedger.length === 0 ? (
-                  <tr><td colSpan={6} className="empty-row">No activity found for this period</td></tr>
+                  <tr><td colSpan={8} className="empty-row">No activity found for this period</td></tr>
                 ) : (
                   filteredLedger.map((e, idx) => {
                     const impact = e.balanceImpact ?? balanceImpact(e.paymentType)
@@ -326,6 +336,12 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                               ? `-$${Math.abs(e.runningBalance).toLocaleString()}`
                               : `$${e.runningBalance.toLocaleString()}`
                           )}
+                        </td>
+                        <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                          {e.gatewayRefNum || '—'}
+                        </td>
+                        <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                          {e.gatewayAuthCode || '—'}
                         </td>
                       </tr>
                     )
