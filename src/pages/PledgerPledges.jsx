@@ -11,16 +11,19 @@ function previousOrCurrentSaturday(d = new Date()) {
   return result.toISOString().split('T')[0]
 }
 
-const blankRow = () => ({
+const blankRow = (defaultOccasion = '') => ({
   memberId: '',
   pledgeType: '',
-  occasion: '',
+  occasion: defaultOccasion,
   amount: '',
   date: previousOrCurrentSaturday(),
 })
 
 export default function PledgerPledges({ allMembers, pledgeTypes, occasions }) {
-  const [rows, setRows] = useState([blankRow()])
+  const defaultOccasion = (occasions.find(
+    o => (o.label || '').toLowerCase() === 'shabbat'
+  )?.label) || ''
+  const [rows, setRows] = useState(() => [blankRow(defaultOccasion)])
   const [showConfirm, setShowConfirm] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState({ kind: '', text: '' })
@@ -50,13 +53,15 @@ export default function PledgerPledges({ allMembers, pledgeTypes, occasions }) {
   }
 
   const addRow = () => {
-    // New rows inherit the date from the last row if it was set, otherwise default.
-    const lastDate = rows[rows.length - 1]?.date || previousOrCurrentSaturday()
-    setRows(prev => [...prev, { ...blankRow(), date: lastDate }])
+    // New rows inherit the date AND occasion from the last row if set, otherwise defaults.
+    const last = rows[rows.length - 1]
+    const lastDate = last?.date || previousOrCurrentSaturday()
+    const lastOccasion = last?.occasion || defaultOccasion
+    setRows(prev => [...prev, { ...blankRow(lastOccasion), date: lastDate }])
   }
 
   const removeRow = (idx) => {
-    setRows(prev => prev.length === 1 ? [blankRow()] : prev.filter((_, i) => i !== idx))
+    setRows(prev => prev.length === 1 ? [blankRow(defaultOccasion)] : prev.filter((_, i) => i !== idx))
   }
 
   const validate = () => {
@@ -106,7 +111,7 @@ export default function PledgerPledges({ allMembers, pledgeTypes, occasions }) {
     setSubmitting(false)
     setShowConfirm(false)
     if (failures.length === 0) {
-      setRows([blankRow()])
+      setRows([blankRow(defaultOccasion)])
       setToast({ kind: 'success', text: `${successCount} pledge${successCount !== 1 ? 's' : ''} submitted.` })
     } else {
       setToast({
