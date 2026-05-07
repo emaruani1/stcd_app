@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
-import { withRunningBalance, neutralReason, paymentTypeLabel } from '../ledger'
+import { withRunningBalance, neutralReason, paymentTypeLabel, formatAttribution } from '../ledger'
 
 export default function AccountStatements({
   allMembers,
@@ -410,6 +410,14 @@ export default function AccountStatements({
                             {noteText}
                           </div>
                         )}
+                        {(() => {
+                          const attr = formatAttribution(t)
+                          return attr ? (
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                              Logged {attr}
+                            </div>
+                          ) : null
+                        })()}
                       </td>
                       {memberAliases.length > 0 && (
                         <td style={{ fontSize: '0.82rem' }}>{t.alias || `${member.firstName} ${member.lastName}`}</td>

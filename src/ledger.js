@@ -68,6 +68,35 @@ export function withRunningBalance(transactions) {
   })
 }
 
+/**
+ * Format an audit attribution sub-line, e.g. "Logged 2026-05-07 14:32 by gabbai@stcd.org (pledger)".
+ * Returns null if no createdBy is set (legacy rows).
+ */
+export function formatAttribution(record) {
+  const by = record.createdBy || record.modifiedBy
+  if (!by) return null
+  const role = record.createdByRole || record.modifiedByRole || ''
+  const at = record.createdAt || record.modifiedAt || ''
+  let when = ''
+  if (at) {
+    try {
+      const d = new Date(at)
+      if (!Number.isNaN(d.getTime())) {
+        when = d.toLocaleString('en-US', {
+          month: 'short', day: 'numeric', year: 'numeric',
+          hour: 'numeric', minute: '2-digit',
+        })
+      } else {
+        when = at
+      }
+    } catch {
+      when = at
+    }
+  }
+  const friendlyBy = by === 'system' ? 'system (auto)' : by
+  return `${when ? when + ' · ' : ''}${friendlyBy}${role ? ` (${role})` : ''}`
+}
+
 /** Friendly label for the type column / badges. */
 export function paymentTypeLabel(type) {
   switch (type) {

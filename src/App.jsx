@@ -107,6 +107,11 @@ function App() {
           canceled: p.canceled || false,
           paymentMethod: p.paymentMethod || '',
           category: p.category || 'pledge',
+          createdBy: p.createdBy || '',
+          createdByRole: p.createdByRole || '',
+          createdAt: p.createdAt || '',
+          modifiedBy: p.modifiedBy || '',
+          modifiedAt: p.modifiedAt || '',
         })
       }
 
@@ -132,6 +137,11 @@ function App() {
           gatewayAuthCode: t.gatewayAuthCode || '',
           gatewayResult: t.gatewayResult || '',
           gatewayStatus: t.gatewayStatus || '',
+          createdBy: t.createdBy || '',
+          createdByRole: t.createdByRole || '',
+          createdAt: t.createdAt || '',
+          modifiedBy: t.modifiedBy || '',
+          modifiedAt: t.modifiedAt || '',
         })
       }
 
@@ -286,6 +296,11 @@ function App() {
       gatewayStatus: t.gatewayStatus || '',
       gatewayError: t.gatewayError || '',
       gatewayErrorCode: t.gatewayErrorCode || '',
+      createdBy: t.createdBy || '',
+      createdByRole: t.createdByRole || '',
+      createdAt: t.createdAt || '',
+      modifiedBy: t.modifiedBy || '',
+      modifiedAt: t.modifiedAt || '',
     }))
 
   const getTransactionsForMember = (memberId) => {

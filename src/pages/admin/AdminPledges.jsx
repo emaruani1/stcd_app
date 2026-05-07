@@ -310,7 +310,21 @@ export default function AdminPledges({
                 filtered.map((p, idx) => (
                   <tr key={`${p.memberId}-${p.id}-${idx}`}>
                     <td><strong>{p.memberName}</strong></td>
-                    <td>{p.description}</td>
+                    <td>
+                      {p.description}
+                      {(p.createdBy || p.modifiedBy) && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                          Logged {(() => {
+                            const at = p.createdAt || p.modifiedAt
+                            const by = p.createdBy || p.modifiedBy
+                            const role = p.createdByRole || p.modifiedByRole
+                            const when = at ? new Date(at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''
+                            const friendlyBy = by === 'system' ? 'system (auto)' : by
+                            return `${when ? when + ' · ' : ''}${friendlyBy}${role ? ` (${role})` : ''}`
+                          })()}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ fontSize: '0.82rem' }}>{p.pledgeType || '—'}</td>
                     <td style={{ fontSize: '0.82rem' }}>{p.occasion || '—'}</td>
                     <td>{paymentTypeBadge(p.category)}</td>

@@ -6,6 +6,7 @@ import json
 import os
 import time
 import uuid
+import base64
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -102,6 +103,93 @@ def respond(status, body):
     }
 
 
+def _now_iso():
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+
+def _decode_jwt_payload(token):
+    """Decode the payload of a JWT without signature validation. Returns dict or {}.
+
+    We trust the token because it travels over HTTPS from a Cognito-authenticated
+    SPA — the same trust level the rest of this Lambda already operates at.
+    """
+    if not token:
+        return {}
+    token = token.replace('Bearer ', '').strip()
+    parts = token.split('.')
+    if len(parts) < 2:
+        return {}
+    try:
+        # base64url decode the payload
+        payload = parts[1]
+        pad = '=' * (-len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload + pad))
+    except Exception:
+        return {}
+
+
+def _get_actor():
+    """
+    Extract the current user from the request. Tries API Gateway Cognito
+    authorizer claims first (populated automatically when an authorizer is
+    configured); falls back to parsing the Authorization JWT directly.
+
+    Returns dict with email, role, memberId, sub. Empty values mean unknown.
+    """
+    claims = (
+        _current_event.get('requestContext', {})
+        .get('authorizer', {})
+        .get('claims', {})
+    )
+    if not claims:
+        # Fallback: parse Authorization header ourselves.
+        headers = _current_event.get('headers') or {}
+        auth = ''
+        for k, v in headers.items():
+            if k.lower() == 'authorization':
+                auth = v
+                break
+        claims = _decode_jwt_payload(auth)
+    return {
+        'email': claims.get('email', ''),
+        'role': claims.get('custom:custom:role', ''),
+        'memberId': claims.get('custom:custom:memberId', ''),
+        'sub': claims.get('sub', ''),
+    }
+
+
+def _actor_stamp_create():
+    """Returns audit fields for newly created records."""
+    a = _get_actor()
+    return {
+        'createdBy': a['email'] or 'unknown',
+        'createdByRole': a['role'] or '',
+        'createdByMemberId': a['memberId'] or '',
+        'createdAt': _now_iso(),
+    }
+
+
+def _actor_stamp_modify():
+    """Returns audit fields stamped on every mutation of an existing record."""
+    a = _get_actor()
+    return {
+        'modifiedBy': a['email'] or 'unknown',
+        'modifiedByRole': a['role'] or '',
+        'modifiedByMemberId': a['memberId'] or '',
+        'modifiedAt': _now_iso(),
+    }
+
+
+def _system_stamp_create():
+    """Audit fields for cron-generated records."""
+    return {
+        'createdBy': 'system',
+        'createdByRole': 'system',
+        'createdByMemberId': '',
+        'createdAt': _now_iso(),
+    }
+
+
 def parse_body(event):
     body = event.get('body', '{}')
     if isinstance(body, str):
@@ -166,6 +254,7 @@ def _write_charge_payment_pair(member_id, date, amount, charge_type, payment_typ
     now_suffix = uuid.uuid4().hex[:8]
     year_month = (date or '')[:7]
     amount_dec = Decimal(str(amount))
+    stamp = _actor_stamp_create()
 
     base = {
         'memberId': member_id_str,
@@ -188,6 +277,7 @@ def _write_charge_payment_pair(member_id, date, amount, charge_type, payment_typ
         'transactionId': f"TXN#{date}#{now_suffix}-c",
         'description': charge_description,
         'paymentType': charge_type,
+        **stamp,
     }
     payment = {
         **base,
@@ -201,6 +291,7 @@ def _write_charge_payment_pair(member_id, date, amount, charge_type, payment_typ
         'gatewayAuthCode': extra.get('gatewayAuthCode', ''),
         'gatewayResult': extra.get('gatewayResult', ''),
         'gatewayStatus': extra.get('gatewayStatus', ''),
+        **stamp,
     }
     balance_applied = Decimal(str(extra.get('balanceApplied', 0)))
     if balance_applied > 0:
@@ -394,6 +485,7 @@ def create_member(body):
     member_id = body.get('memberId', str(uuid.uuid4())[:8])
     body['memberId'] = member_id
     body['balance'] = Decimal(str(body.get('balance', 0)))
+    body.update(_actor_stamp_create())
     members_table.put_item(Item=body)
     return respond(201, body)
 
@@ -401,6 +493,9 @@ def create_member(body):
 def update_member(member_id, body):
     # First fetch existing member to avoid overwriting with empty values
     existing = members_table.get_item(Key={'memberId': member_id}).get('Item', {})
+
+    # Always stamp who/when on every member update
+    body = {**body, **_actor_stamp_modify()}
 
     expr_parts = []
     expr_values = {}
@@ -471,6 +566,7 @@ def merge_members(body):
         primary[field] = primary.get(field, []) + secondary.get(field, [])
 
     # Save merged primary
+    primary.update(_actor_stamp_modify())
     members_table.put_item(Item=primary)
 
     # Move secondary's transactions to primary
@@ -562,6 +658,7 @@ def create_transaction(body):
         'gatewayResult': body.get('gatewayResult', ''),
         'gatewayStatus': body.get('gatewayStatus', ''),
         'balanceApplied': balance_applied if balance_applied > 0 else '',
+        **_actor_stamp_create(),
     }
     # Clean empty strings
     item = {k: v for k, v in item.items() if v != '' or k in ('memberId', 'transactionId', 'date')}
@@ -657,12 +754,20 @@ def set_member_autopay(member_id, body):
     payment_method_id = body.get('paymentMethodId') or ''
     if enabled and not payment_method_id:
         return respond(400, {'error': 'paymentMethodId is required when enabling autopay'})
+    stamp = _actor_stamp_modify()
     members_table.update_item(
         Key={'memberId': str(member_id)},
-        UpdateExpression='SET autopayEnabled = :e, autopayPaymentMethodId = :p',
+        UpdateExpression=(
+            'SET autopayEnabled = :e, autopayPaymentMethodId = :p, '
+            'modifiedBy = :mb, modifiedByRole = :mr, modifiedByMemberId = :mm, modifiedAt = :ma'
+        ),
         ExpressionAttributeValues={
             ':e': enabled,
             ':p': payment_method_id,
+            ':mb': stamp['modifiedBy'],
+            ':mr': stamp['modifiedByRole'],
+            ':mm': stamp['modifiedByMemberId'],
+            ':ma': stamp['modifiedAt'],
         },
     )
     return respond(200, {
@@ -796,6 +901,7 @@ def charge_membership_fee(body):
         'gatewayAuthCode': resp.get('xAuthCode', ''),
         'gatewayResult': resp.get('xResult', ''),
         'gatewayStatus': resp.get('xStatus', ''),
+        **_actor_stamp_create(),
     }
     payment_txn = {k: v for k, v in payment_txn.items() if v not in ('', None)}
     transactions_table.put_item(Item=payment_txn)
@@ -885,6 +991,7 @@ def run_monthly_membership_billing():
             'amount': amount,
             'paymentType': 'membership-fee',
             'category': 'Membership',
+            **_system_stamp_create(),
         }
         transactions_table.put_item(Item=charge_txn)
         summary['fees_created'] += 1
@@ -919,6 +1026,13 @@ def update_transaction(body):
         expr_names[safe_key] = key
         expr_parts.append(f"{safe_key} = :{key}")
         expr_values[f":{key}"] = value
+
+    # Always include modifiedBy/modifiedAt on the update itself
+    for k, v in _actor_stamp_modify().items():
+        safe_key = f"#{k}"
+        expr_names[safe_key] = k
+        expr_parts.append(f"{safe_key} = :{k}")
+        expr_values[f":{k}"] = v
 
     if expr_parts:
         transactions_table.update_item(
@@ -964,6 +1078,7 @@ def create_pledge(body):
     date = body.get('date', '')
     pledge_id = f"PLG#{date}#{uuid.uuid4().hex[:8]}"
 
+    actor_stamp = _actor_stamp_create()
     item = {
         'memberId': member_id,
         'pledgeId': pledge_id,
@@ -977,6 +1092,7 @@ def create_pledge(body):
         'canceled': False,
         'paymentMethod': '',
         'category': body.get('category', 'pledge'),
+        **actor_stamp,
     }
 
     pledges_table.put_item(Item=item)
@@ -995,6 +1111,7 @@ def create_pledge(body):
         'paymentType': 'pledge-charge',
         'pledgeId': pledge_id,
         'category': item['category'],
+        **actor_stamp,
     }
     charge_txn = {k: v for k, v in charge_txn.items() if v not in ('', None)}
     transactions_table.put_item(Item=charge_txn)
@@ -1026,6 +1143,13 @@ def update_pledge(body):
         expr_names[safe_key] = key
         expr_parts.append(f"{safe_key} = :{key}")
         expr_values[f":{key}"] = value
+
+    # Always stamp who modified this pledge
+    for k, v in _actor_stamp_modify().items():
+        safe_key = f"#{k}"
+        expr_names[safe_key] = k
+        expr_parts.append(f"{safe_key} = :{k}")
+        expr_values[f":{k}"] = v
 
     if expr_parts:
         pledges_table.update_item(
@@ -1103,6 +1227,7 @@ def pay_pledge(body):
         'method': method,
         'paymentType': 'pledge',
         'pledgeId': pledge_id,
+        **_actor_stamp_create(),
     }
     alias = body.get('alias', '')
     if alias:
@@ -1183,6 +1308,7 @@ def update_setting(key, body):
     settings_table.put_item(Item={
         'settingKey': key,
         'items': items,
+        **_actor_stamp_modify(),
     })
     return respond(200, {'message': f'Setting {key} updated'})
 
@@ -1212,6 +1338,7 @@ def update_sponsorship(date_key, body):
     # Merge with existing
     existing = sponsorships_table.get_item(Key={'dateKey': date_key}).get('Item', {})
     existing.update(item)
+    existing.update(_actor_stamp_modify())
     sponsorships_table.put_item(Item=existing)
     return respond(200, existing)
 
@@ -1257,6 +1384,7 @@ def create_email(body):
         'body': body.get('body', ''),
         'recipients': body.get('recipients', []),
         'memberIds': body.get('memberIds', []),
+        **_actor_stamp_create(),
     }
     emails_table.put_item(Item=item)
     return respond(201, item)
@@ -1565,6 +1693,7 @@ def create_payment_method(body):
     if set_default:
         _clear_default_payment_methods(member_id)
 
+    actor = _actor_stamp_create()
     item = {
         'memberId': int(member_id) if str(member_id).isdigit() else member_id,
         'paymentMethodId': payment_method_id,
@@ -1577,7 +1706,10 @@ def create_payment_method(body):
         'cardholderName': name,
         'zip': zip_code,
         'isDefault': set_default,
-        'createdAt': int(time.time()),
+        # Existing field uses unix epoch; we keep it for back-compat. The ISO
+        # createdAt and createdBy come from the actor stamp.
+        'createdAtEpoch': int(time.time()),
+        **actor,
     }
     item = {k: v for k, v in item.items() if v not in ('', None)}
     payment_methods_table.put_item(Item=item)
@@ -1802,6 +1934,7 @@ def charge_saved_card(body):
             'gatewayStatus': resp.get('xStatus', ''),
             'gatewayError': resp.get('xError', ''),
             'gatewayErrorCode': resp.get('xErrorCode', ''),
+            **_actor_stamp_create(),
         }
         txn_record = {k: v for k, v in txn_record.items() if v not in ('', None)}
         try:

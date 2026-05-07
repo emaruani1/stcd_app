@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { withRunningBalance, balanceImpact, neutralReason, paymentTypeLabel } from '../ledger'
+import { withRunningBalance, balanceImpact, neutralReason, paymentTypeLabel, formatAttribution } from '../ledger'
 
 // eslint-disable-next-line no-unused-vars
 export default function PaymentHistory({ currentMember, pledgePayments, extraPayments, adminTransactions }) {
@@ -253,6 +253,14 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                               {noteText}
                             </div>
                           )}
+                          {(() => {
+                            const attr = formatAttribution(p)
+                            return attr ? (
+                              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                Logged {attr}
+                              </div>
+                            ) : null
+                          })()}
                         </td>
                         {memberAliases.length > 0 && <td style={{ fontSize: '0.82rem' }}>{p.alias || `${currentMember.firstName} ${currentMember.lastName}`}</td>}
                         <td>{paymentTypeBadge(p.paymentType)}</td>
@@ -319,6 +327,14 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                               {noteText}
                             </div>
                           )}
+                          {(() => {
+                            const attr = formatAttribution(e)
+                            return attr ? (
+                              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                Logged {attr}
+                              </div>
+                            ) : null
+                          })()}
                         </td>
                         <td>{paymentTypeBadge(e.paymentType)}</td>
                         <td className="amount-cell" style={{ color: 'var(--danger)' }}>
