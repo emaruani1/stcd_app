@@ -333,7 +333,28 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
       <div className="page-title-row">
         <div>
           <h1 className="page-title">Edit: {member.firstName} {member.lastName}</h1>
-          <p className="page-subtitle">Member ID: {member.memberId || member.id}</p>
+          <p className="page-subtitle" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            Member ID:
+            <span
+              title="Member IDs are permanent and cannot be changed. They keep historical pledges, payments, and statements correctly linked."
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '2px 10px',
+                borderRadius: '50px',
+                background: 'var(--bg-warm)',
+                border: '1px solid var(--border)',
+                fontFamily: 'monospace',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                color: 'var(--text)',
+                cursor: 'help',
+              }}
+            >
+              🔒 {member.memberId || member.id}
+            </span>
+          </p>
         </div>
         <button className="modal-btn-secondary" style={{ padding: '10px 20px' }} onClick={() => navigate('/admin/members')}>
           Back to Members

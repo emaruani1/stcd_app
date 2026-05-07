@@ -272,7 +272,26 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
                             <h4>Profile</h4>
                             <div className="expanded-info-grid">
                               <div className="expanded-info-item"><strong>Phone:</strong> {m.phone}</div>
-                              <div className="expanded-info-item"><strong>Member ID:</strong> {m.memberId}</div>
+                              <div className="expanded-info-item">
+                                <strong>Member ID:</strong>{' '}
+                                <span
+                                  title="Member IDs are permanent and cannot be changed."
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    padding: '1px 8px',
+                                    borderRadius: '50px',
+                                    background: 'var(--bg-warm)',
+                                    border: '1px solid var(--border)',
+                                    fontFamily: 'monospace',
+                                    fontSize: '0.8rem',
+                                    cursor: 'help',
+                                  }}
+                                >
+                                  🔒 {m.memberId}
+                                </span>
+                              </div>
                               <div className="expanded-info-item"><strong>Since:</strong> {formatDate(m.memberSince)}</div>
                               <div className="expanded-info-item"><strong>Address:</strong> {m.address}, {m.city}, {m.state} {m.zip}</div>
                               <div className="expanded-info-item"><strong>Available Credit:</strong> <span style={{ color: memberBal > 0 ? 'var(--success)' : 'var(--text-muted)', fontWeight: 600 }}>${memberBal.toLocaleString()}</span></div>
