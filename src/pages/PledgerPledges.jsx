@@ -30,11 +30,12 @@ export default function PledgerPledges({ allMembers, pledgeTypes, occasions }) {
     setRows(prev => prev.map((r, i) => {
       if (i !== idx) return r
       const next = { ...r, [field]: value }
-      // When pledge type changes, reset occasion if not allowed for the new type.
-      if (field === 'pledgeType') {
-        const pt = pledgeTypes.find(p => p.id === value)
-        if (pt && next.occasion && !pt.occasions.includes(next.occasion)) {
-          next.occasion = ''
+      // Occasion drives pledge-type filtering — when occasion changes, drop the
+      // selected pledge type if it doesn't apply to the new occasion.
+      if (field === 'occasion') {
+        const pt = pledgeTypes.find(p => p.id === next.pledgeType)
+        if (pt && value && !pt.occasions.includes(value)) {
+          next.pledgeType = ''
         }
       }
       return next
@@ -62,8 +63,8 @@ export default function PledgerPledges({ allMembers, pledgeTypes, occasions }) {
     const errs = {}
     rows.forEach((r, i) => {
       if (!r.memberId) errs[i] = 'Pick a member'
-      else if (!r.pledgeType) errs[i] = 'Pick a pledge type'
       else if (!r.occasion) errs[i] = 'Pick an occasion'
+      else if (!r.pledgeType) errs[i] = 'Pick a pledge type'
       else if (!r.amount || Number(r.amount) <= 0) errs[i] = 'Enter an amount > 0'
       else if (!r.date) errs[i] = 'Pick a date'
     })
@@ -115,10 +116,9 @@ export default function PledgerPledges({ allMembers, pledgeTypes, occasions }) {
     }
   }
 
-  const occasionsForType = (typeId) => {
-    const pt = pledgeTypes.find(p => p.id === typeId)
-    if (!pt) return []
-    return occasions.filter(o => pt.occasions.includes(o.label))
+  const pledgeTypesForOccasion = (occasionLabel) => {
+    if (!occasionLabel) return []
+    return pledgeTypes.filter(pt => pt.occasions.includes(occasionLabel))
   }
 
   const totalAmount = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
@@ -153,7 +153,7 @@ export default function PledgerPledges({ allMembers, pledgeTypes, occasions }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {rows.map((r, idx) => {
             const err = perRowError[idx]
-            const occList = occasionsForType(r.pledgeType)
+            const typeList = pledgeTypesForOccasion(r.occasion)
             return (
               <div
                 key={idx}
@@ -196,27 +196,27 @@ export default function PledgerPledges({ allMembers, pledgeTypes, occasions }) {
                     />
                   </div>
                   <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label>Pledge Type</label>
-                    <select
-                      value={r.pledgeType}
-                      onChange={e => updateRow(idx, 'pledgeType', e.target.value)}
-                    >
-                      <option value="">— Select —</option>
-                      {pledgeTypes.map(pt => (
-                        <option key={pt.id} value={pt.id}>{pt.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
                     <label>Occasion</label>
                     <select
                       value={r.occasion}
                       onChange={e => updateRow(idx, 'occasion', e.target.value)}
-                      disabled={!r.pledgeType}
                     >
-                      <option value="">{r.pledgeType ? '— Select —' : 'Pick a type first'}</option>
-                      {occList.map(o => (
+                      <option value="">— Select —</option>
+                      {occasions.map(o => (
                         <option key={o.id} value={o.label}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Pledge Type</label>
+                    <select
+                      value={r.pledgeType}
+                      onChange={e => updateRow(idx, 'pledgeType', e.target.value)}
+                      disabled={!r.occasion}
+                    >
+                      <option value="">{r.occasion ? '— Select —' : 'Pick an occasion first'}</option>
+                      {typeList.map(pt => (
+                        <option key={pt.id} value={pt.id}>{pt.label}</option>
                       ))}
                     </select>
                   </div>
