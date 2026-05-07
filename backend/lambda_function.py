@@ -6,11 +6,12 @@ import json
 import os
 import time
 import uuid
-import base64
 import urllib.request
 import urllib.parse
 import urllib.error
 import boto3
+import jwt
+from jwt.algorithms import RSAAlgorithm
 from decimal import Decimal
 from boto3.dynamodb.conditions import Key
 
@@ -24,6 +25,10 @@ emails_table = dynamodb.Table(os.environ.get('EMAILS_TABLE', 'stcd_emails'))
 settings_table = dynamodb.Table(os.environ.get('SETTINGS_TABLE', 'stcd_settings'))
 payment_methods_table = dynamodb.Table(os.environ.get('PAYMENT_METHODS_TABLE', 'stcd_payment_methods'))
 COGNITO_POOL_ID = os.environ.get('COGNITO_POOL_ID', 'us-east-2_Pna4Sv1p8')
+COGNITO_REGION = os.environ.get('COGNITO_REGION', 'us-east-2')
+COGNITO_CLIENT_ID = os.environ.get('COGNITO_CLIENT_ID', '7hvnos43j267cl5v1m2knojeda')
+COGNITO_ISSUER = f'https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_POOL_ID}'
+JWKS_URL = f'{COGNITO_ISSUER}/.well-known/jwks.json'
 
 # Sola / FideliPay
 SOLA_X_KEY = os.environ.get('SOLA_X_KEY', '')
@@ -107,49 +112,95 @@ def _now_iso():
     return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
 
 
-def _decode_jwt_payload(token):
-    """Decode the payload of a JWT without signature validation. Returns dict or {}.
+# JWKS cache (lives for the Lambda container's lifetime; stale-after refresh handled below)
+_jwks_cache = {'keys': None, 'fetched_at': 0}
+_JWKS_TTL_SECONDS = 3600  # refresh hourly even if no cache miss
 
-    We trust the token because it travels over HTTPS from a Cognito-authenticated
-    SPA — the same trust level the rest of this Lambda already operates at.
+
+def _fetch_jwks(force=False):
+    now = time.time()
+    if (not force
+            and _jwks_cache['keys']
+            and (now - _jwks_cache['fetched_at']) < _JWKS_TTL_SECONDS):
+        return _jwks_cache['keys']
+    with urllib.request.urlopen(JWKS_URL, timeout=5) as r:
+        data = json.loads(r.read())
+    _jwks_cache['keys'] = data.get('keys', [])
+    _jwks_cache['fetched_at'] = now
+    return _jwks_cache['keys']
+
+
+def _public_key_for_kid(kid):
+    """Find the JWK matching `kid`. Refreshes JWKS once if not found."""
+    for jwk in _fetch_jwks():
+        if jwk.get('kid') == kid:
+            return RSAAlgorithm.from_jwk(json.dumps(jwk))
+    # Maybe the pool rotated keys — force refresh once.
+    for jwk in _fetch_jwks(force=True):
+        if jwk.get('kid') == kid:
+            return RSAAlgorithm.from_jwk(json.dumps(jwk))
+    return None
+
+
+def _verify_jwt(authorization_header):
     """
+    Verify the JWT in the Authorization header against Cognito's JWKS.
+
+    Validates: signature (RS256), issuer, audience, expiration, and that this
+    is a Cognito ID token (token_use='id').
+
+    Returns the verified claims dict on success, or None on any failure.
+    """
+    if not authorization_header:
+        return None
+    token = authorization_header.replace('Bearer ', '').strip()
     if not token:
-        return {}
-    token = token.replace('Bearer ', '').strip()
-    parts = token.split('.')
-    if len(parts) < 2:
-        return {}
+        return None
     try:
-        # base64url decode the payload
-        payload = parts[1]
-        pad = '=' * (-len(payload) % 4)
-        return json.loads(base64.urlsafe_b64decode(payload + pad))
-    except Exception:
-        return {}
+        unverified_header = jwt.get_unverified_header(token)
+    except jwt.PyJWTError:
+        return None
+    kid = unverified_header.get('kid')
+    if not kid:
+        return None
+    public_key = _public_key_for_kid(kid)
+    if public_key is None:
+        return None
+    try:
+        # PyJWT's decode does the heavy lifting:
+        #   - verifies RS256 signature against the public key
+        #   - verifies `iss` matches issuer
+        #   - verifies `aud` matches audience (ID tokens have aud=client_id)
+        #   - verifies `exp` and `nbf`
+        claims = jwt.decode(
+            token,
+            public_key,
+            algorithms=['RS256'],
+            audience=COGNITO_CLIENT_ID,
+            issuer=COGNITO_ISSUER,
+            leeway=30,  # tolerate 30s clock skew
+        )
+    except jwt.ExpiredSignatureError:
+        print('[auth] token expired')
+        return None
+    except jwt.InvalidTokenError as e:
+        print(f'[auth] invalid token: {e}')
+        return None
+    # Reject anything that isn't a Cognito ID token. The frontend always sends
+    # ID tokens; access tokens have a different shape and shouldn't be trusted
+    # for actor attribution (no email claim by default).
+    if claims.get('token_use') != 'id':
+        return None
+    return claims
 
 
 def _get_actor():
     """
-    Extract the current user from the request. Tries API Gateway Cognito
-    authorizer claims first (populated automatically when an authorizer is
-    configured); falls back to parsing the Authorization JWT directly.
-
-    Returns dict with email, role, memberId, sub. Empty values mean unknown.
+    Pull the verified user identity captured at lambda_handler entry.
+    Returns dict with email, role, memberId, sub. Empty if unverified
+    (only the EventBridge cron path reaches here without verified claims).
     """
-    claims = (
-        _current_event.get('requestContext', {})
-        .get('authorizer', {})
-        .get('claims', {})
-    )
-    if not claims:
-        # Fallback: parse Authorization header ourselves.
-        headers = _current_event.get('headers') or {}
-        auth = ''
-        for k, v in headers.items():
-            if k.lower() == 'authorization':
-                auth = v
-                break
-        claims = _decode_jwt_payload(auth)
+    claims = _current_event.get('_verified_claims') or {}
     return {
         'email': claims.get('email', ''),
         'role': claims.get('custom:custom:role', ''),
@@ -328,7 +379,9 @@ def lambda_handler(event, context):
     global _current_event
     _current_event = event
 
-    # Scheduled invocation from EventBridge — no API Gateway envelope.
+    # Scheduled invocation from EventBridge — bypasses HTTP auth (the cron has
+    # no JWT and isn't routed through API Gateway). EventBridge invocation is
+    # itself gated by the resource policy on the Lambda.
     if event.get('source') == 'aws.events' or event.get('scheduled_action'):
         action = event.get('scheduled_action') or event.get('detail', {}).get('action')
         if action == 'monthly_membership' or event.get('source') == 'aws.events':
@@ -338,8 +391,23 @@ def lambda_handler(event, context):
     method = event.get('httpMethod', '')
     path = event.get('path', '')
 
+    # Preflight — no auth required.
     if method == 'OPTIONS':
         return respond(200, {'message': 'ok'})
+
+    # ===== Mandatory JWT verification for every HTTP route =====
+    auth_header = ''
+    headers = event.get('headers') or {}
+    for k, v in headers.items():
+        if k.lower() == 'authorization':
+            auth_header = v
+            break
+    verified_claims = _verify_jwt(auth_header)
+    if not verified_claims:
+        return respond(401, {'error': 'Invalid or missing authentication token'})
+    # Stash the verified claims so _get_actor() and any future authorization
+    # checks downstream can rely on them.
+    _current_event['_verified_claims'] = verified_claims
 
     try:
         # ===== MEMBERS =====
