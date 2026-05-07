@@ -396,6 +396,7 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
                 <label style={{ fontSize: '0.82rem' }}>Role</label>
                 <select value={newUserRole} onChange={e => setNewUserRole(e.target.value)}>
                   <option value="member">Member</option>
+                  <option value="pledger">Pledger</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>
@@ -446,6 +447,7 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
                   disabled={!!cognitoAction}
                 >
                   <option value="member">Member</option>
+                  <option value="pledger">Pledger (pledge entry only)</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>

@@ -22,6 +22,7 @@ import AdminMerge from './pages/admin/AdminMerge'
 import AdminMemberEdit from './pages/admin/AdminMemberEdit'
 import AdminMembershipBilling from './pages/admin/AdminMembershipBilling'
 import AccountSecurity from './pages/AccountSecurity'
+import PledgerPledges from './pages/PledgerPledges'
 import { logout, getCurrentSession } from './auth'
 import * as api from './api'
 import { computeAccountBalance } from './ledger'
@@ -380,6 +381,26 @@ function App() {
         try { await api.deleteSponsorship(dateKey, { field: type }) } catch (e) { console.error(e) }
       }
     }
+  }
+
+  if (userRole === 'pledger') {
+    return (
+      <Layout onLogout={handleLogout} userRole={userRole} currentMember={null}>
+        <Routes>
+          <Route
+            path="/pledges"
+            element={
+              <PledgerPledges
+                allMembers={allMembers}
+                pledgeTypes={pledgeTypes}
+                occasions={occasions}
+              />
+            }
+          />
+          <Route path="*" element={<Navigate to="/pledges" replace />} />
+        </Routes>
+      </Layout>
+    )
   }
 
   if (userRole === 'admin') {

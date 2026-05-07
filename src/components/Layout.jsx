@@ -7,6 +7,7 @@ export default function Layout({ children, onLogout, userRole, currentMember }) 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   const isAdmin = userRole === 'admin'
+  const isPledger = userRole === 'pledger'
 
   const memberNavItems = [
     { path: '/', label: 'Dashboard', icon: '📊' },
@@ -32,13 +33,21 @@ export default function Layout({ children, onLogout, userRole, currentMember }) 
     { path: '/admin/security', label: 'Account Security', icon: '🔒' },
   ]
 
-  const navItems = isAdmin ? adminNavItems : memberNavItems
+  const pledgerNavItems = [
+    { path: '/pledges', label: 'Pledges', icon: '📝' },
+  ]
+
+  const navItems = isAdmin ? adminNavItems : isPledger ? pledgerNavItems : memberNavItems
   const displayUser = isAdmin ? adminUser : currentMember
   const displayName = isAdmin
     ? 'Admin'
+    : isPledger
+    ? 'Pledger'
     : `${displayUser?.firstName || ''} ${displayUser?.lastName || ''}`
   const initials = isAdmin
     ? 'A'
+    : isPledger
+    ? 'P'
     : `${displayUser?.firstName?.[0] || ''}${displayUser?.lastName?.[0] || ''}`
 
   return (
@@ -60,11 +69,12 @@ export default function Layout({ children, onLogout, userRole, currentMember }) 
               <div className="portal-logo-text">
                 <span className="portal-logo-title">STCD</span>
                 <span className="portal-logo-subtitle">
-                  {isAdmin ? 'Admin Portal' : 'Member Portal'}
+                  {isAdmin ? 'Admin Portal' : isPledger ? 'Pledger Portal' : 'Member Portal'}
                 </span>
               </div>
             </div>
             {isAdmin && <span className="admin-mode-badge">ADMIN</span>}
+            {isPledger && <span className="admin-mode-badge" style={{ background: 'var(--accent-dark)' }}>PLEDGER</span>}
           </div>
           <div className="portal-header-right">
             <div className="portal-user-info">
@@ -104,6 +114,8 @@ export default function Layout({ children, onLogout, userRole, currentMember }) 
           <div className="portal-sidebar-footer">
             {isAdmin ? (
               <p className="portal-member-id">Admin Panel</p>
+            ) : isPledger ? (
+              <p className="portal-member-id">Pledge Entry</p>
             ) : (
               <p className="portal-member-id">ID: {displayUser?.memberId}</p>
             )}

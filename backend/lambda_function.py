@@ -1423,8 +1423,8 @@ def cognito_update_role(body):
     role = body.get('role', 'member')
     if not email:
         return respond(400, {'error': 'email is required'})
-    if role not in ('admin', 'member'):
-        return respond(400, {'error': 'role must be admin or member'})
+    if role not in ('admin', 'member', 'pledger'):
+        return respond(400, {'error': 'role must be admin, member, or pledger'})
     username = _resolve_cognito_username(email)
     if not username:
         return respond(404, {'error': 'User not found'})
