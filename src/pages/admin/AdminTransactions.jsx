@@ -364,10 +364,10 @@ export default function AdminTransactions({
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
                             Logged {(() => {
                               const at = t.createdAt || t.modifiedAt
-                              const by = t.createdBy || t.modifiedBy
+                              const by = t.createdByName || t.modifiedByName || t.createdBy || t.modifiedBy
                               const role = t.createdByRole || t.modifiedByRole
                               const when = at ? new Date(at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''
-                              const friendlyBy = by === 'system' ? 'system (auto)' : by
+                              const friendlyBy = by === 'system' ? 'System (auto)' : by
                               return `${when ? when + ' · ' : ''}${friendlyBy}${role ? ` (${role})` : ''}`
                             })()}
                           </div>

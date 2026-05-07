@@ -5,7 +5,6 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
   const navigate = useNavigate()
 
   const memberPledges = currentMember.pledges
-  const memberPaymentHistory = currentMember.paymentHistory
 
   const getRemainingBalance = (p) => {
     const sessionPaid = pledgePayments[p.id] || 0
@@ -23,23 +22,13 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
 
   const totalStaticPaid = memberPledges.reduce((sum, p) => sum + p.paidAmount, 0)
   const totalSessionPledgePaid = Object.values(pledgePayments).reduce((sum, v) => sum + v, 0)
-  const totalHistoryPaid = memberPaymentHistory.reduce((sum, p) => sum + p.amount, 0)
+  const totalHistoryPaid = currentMember.paymentHistory.reduce((sum, p) => sum + p.amount, 0)
   const totalExtraPaid = extraPayments.reduce((sum, p) => sum + p.amount, 0)
   const totalPaid = totalStaticPaid + totalSessionPledgePaid + totalHistoryPaid + totalExtraPaid
 
   const formatDate = (dateStr) => {
     const d = new Date(dateStr + 'T00:00:00')
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-  }
-
-  const paymentTypeBadge = (type) => {
-    const cls = {
-      membership: 'badge-membership',
-      pledge: 'badge-pledge',
-      donation: 'badge-donation',
-      purchase: 'badge-purchase',
-    }[type] || 'badge-pending'
-    return <span className={`badge ${cls}`} style={{ fontSize: '0.72rem' }}>{type ? type.charAt(0).toUpperCase() + type.slice(1) : '—'}</span>
   }
 
   const categoryBadge = (cat) => {
@@ -50,13 +39,10 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
     return <span className={`badge ${cls}`} style={{ fontSize: '0.72rem' }}>{cat ? cat.charAt(0).toUpperCase() + cat.slice(1) : '—'}</span>
   }
 
-  const today = new Date()
-  const fortyFiveDaysAgo = new Date(today)
-  fortyFiveDaysAgo.setDate(fortyFiveDaysAgo.getDate() - 45)
-
-  const overduePledges = unpaidPledges
-    .filter(p => new Date(p.date + 'T00:00:00') < fortyFiveDaysAgo)
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
+  // Show every outstanding pledge, newest first.
+  const outstandingPledges = unpaidPledges
+    .slice()
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
 
   const isMember = currentMember.membershipType && membershipTiers[currentMember.membershipType]
   const tier = isMember ? membershipTiers[currentMember.membershipType] : null
@@ -146,10 +132,12 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
         </div>
       </div>
 
-      {/* Overdue Pledges */}
-      {overduePledges.length > 0 && (
-        <div className="dashboard-section">
-          <h2 className="section-title overdue-title">Overdue Pledges</h2>
+      {/* Outstanding Pledges */}
+      <div className="dashboard-section">
+        <h2 className="section-title">Outstanding Pledges</h2>
+        {outstandingPledges.length === 0 ? (
+          <p style={{ color: 'var(--text-muted)', margin: 0 }}>You&apos;re all caught up — no outstanding pledges.</p>
+        ) : (
           <div className="pledges-table-wrap">
             <table className="pledges-table">
               <thead>
@@ -159,12 +147,11 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
                   <th>Category</th>
                   <th>Date</th>
                   <th>Amount</th>
-                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {overduePledges.map(p => (
-                  <tr key={p.id} className="overdue-row">
+                {outstandingPledges.map(p => (
+                  <tr key={p.id}>
                     <td>{p.description}</td>
                     <td style={{ fontSize: '0.82rem' }}>{p.occasion || '—'}</td>
                     <td>{categoryBadge(p.category)}</td>
@@ -175,53 +162,12 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
                         <span className="remaining-badge">${p.remaining.toLocaleString()} remaining</span>
                       )}
                     </td>
-                    <td><span className="badge badge-overdue">Overdue</span></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
-      )}
-
-      {/* Recent Payments */}
-      <div className="dashboard-section">
-        <h2 className="section-title">Recent Payments</h2>
-        <div className="pledges-table-wrap">
-          <table className="pledges-table">
-            <thead>
-              <tr>
-                <th>Description</th>
-                <th>Type</th>
-                <th>Date</th>
-                <th>Amount</th>
-                <th>Method</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...memberPaymentHistory, ...extraPayments]
-                .sort((a, b) => new Date(b.date) - new Date(a.date))
-                .slice(0, 5)
-                .map((p, idx) => (
-                <tr key={p.id || idx}>
-                  <td>{p.description}</td>
-                  <td>{paymentTypeBadge(p.paymentType)}</td>
-                  <td>{formatDate(p.date)}</td>
-                  <td className="amount-cell">${p.amount.toLocaleString()}</td>
-                  <td>{p.method}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem' }}>
-          <button className="view-all-btn" onClick={() => navigate('/history')}>
-            View Full History
-          </button>
-          <button className="view-all-btn" onClick={() => navigate('/statements')} style={{ background: 'var(--bg-warm)' }}>
-            View Statement
-          </button>
-        </div>
+        )}
       </div>
     </div>
   )

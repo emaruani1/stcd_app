@@ -69,11 +69,12 @@ export function withRunningBalance(transactions) {
 }
 
 /**
- * Format an audit attribution sub-line, e.g. "Logged 2026-05-07 14:32 by gabbai@stcd.org (pledger)".
- * Returns null if no createdBy is set (legacy rows).
+ * Format an audit attribution sub-line, e.g. "Logged May 7, 2026 2:34 PM · Eli Maruani (pledger)".
+ * Prefers createdByName (resolved from the email -> member map in App.jsx).
+ * Returns null if no actor is set (legacy rows).
  */
 export function formatAttribution(record) {
-  const by = record.createdBy || record.modifiedBy
+  const by = record.createdByName || record.modifiedByName || record.createdBy || record.modifiedBy
   if (!by) return null
   const role = record.createdByRole || record.modifiedByRole || ''
   const at = record.createdAt || record.modifiedAt || ''
@@ -93,7 +94,7 @@ export function formatAttribution(record) {
       when = at
     }
   }
-  const friendlyBy = by === 'system' ? 'system (auto)' : by
+  const friendlyBy = by === 'system' ? 'System (auto)' : by
   return `${when ? when + ' · ' : ''}${friendlyBy}${role ? ` (${role})` : ''}`
 }
 

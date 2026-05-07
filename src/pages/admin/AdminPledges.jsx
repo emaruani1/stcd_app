@@ -316,10 +316,10 @@ export default function AdminPledges({
                         <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
                           Logged {(() => {
                             const at = p.createdAt || p.modifiedAt
-                            const by = p.createdBy || p.modifiedBy
+                            const by = p.createdByName || p.modifiedByName || p.createdBy || p.modifiedBy
                             const role = p.createdByRole || p.modifiedByRole
                             const when = at ? new Date(at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''
-                            const friendlyBy = by === 'system' ? 'system (auto)' : by
+                            const friendlyBy = by === 'system' ? 'System (auto)' : by
                             return `${when ? when + ' · ' : ''}${friendlyBy}${role ? ` (${role})` : ''}`
                           })()}
                         </div>

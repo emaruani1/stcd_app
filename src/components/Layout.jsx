@@ -11,12 +11,12 @@ export default function Layout({ children, onLogout, userRole, currentMember }) 
 
   const memberNavItems = [
     { path: '/', label: 'Dashboard', icon: '📊' },
-    { path: '/profile', label: 'Profile', icon: '👤' },
-    { path: '/history', label: 'Payment History', icon: '📜' },
     { path: '/pay', label: 'Make Payment', icon: '💳' },
-    { path: '/cards', label: 'Saved Cards', icon: '💼' },
     { path: '/sponsor', label: 'Sponsor', icon: '🕍' },
+    { path: '/cards', label: 'Saved Cards', icon: '💼' },
+    { path: '/history', label: 'Payment History', icon: '📜' },
     { path: '/statements', label: 'Statements', icon: '📄' },
+    { path: '/profile', label: 'Profile', icon: '👤' },
   ]
 
   const adminNavItems = [

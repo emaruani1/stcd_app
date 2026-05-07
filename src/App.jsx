@@ -91,6 +91,21 @@ function App() {
         api.fetchEmails(),
       ])
 
+      // Build a lowercased email -> "First Last" lookup so audit fields can show
+      // friendly names instead of raw email addresses.
+      const nameByEmail = {}
+      for (const m of membersData) {
+        const email = (m.email || '').trim().toLowerCase()
+        if (!email) continue
+        const name = `${m.firstName || ''} ${m.lastName || ''}`.trim()
+        if (name) nameByEmail[email] = name
+      }
+      const resolveName = (raw) => {
+        if (!raw) return ''
+        if (raw === 'system') return ''  // formatAttribution will render "System (auto)"
+        return nameByEmail[raw.toLowerCase()] || raw
+      }
+
       // Build members with embedded pledges and paymentHistory for component compatibility
       const pledgesByMember = {}
       for (const p of pledgesData) {
@@ -108,9 +123,11 @@ function App() {
           paymentMethod: p.paymentMethod || '',
           category: p.category || 'pledge',
           createdBy: p.createdBy || '',
+          createdByName: resolveName(p.createdBy),
           createdByRole: p.createdByRole || '',
           createdAt: p.createdAt || '',
           modifiedBy: p.modifiedBy || '',
+          modifiedByName: resolveName(p.modifiedBy),
           modifiedAt: p.modifiedAt || '',
         })
       }
@@ -138,9 +155,11 @@ function App() {
           gatewayResult: t.gatewayResult || '',
           gatewayStatus: t.gatewayStatus || '',
           createdBy: t.createdBy || '',
+          createdByName: resolveName(t.createdBy),
           createdByRole: t.createdByRole || '',
           createdAt: t.createdAt || '',
           modifiedBy: t.modifiedBy || '',
+          modifiedByName: resolveName(t.modifiedBy),
           modifiedAt: t.modifiedAt || '',
         })
       }
@@ -297,9 +316,11 @@ function App() {
       gatewayError: t.gatewayError || '',
       gatewayErrorCode: t.gatewayErrorCode || '',
       createdBy: t.createdBy || '',
+      createdByName: t.createdByName || '',
       createdByRole: t.createdByRole || '',
       createdAt: t.createdAt || '',
       modifiedBy: t.modifiedBy || '',
+      modifiedByName: t.modifiedByName || '',
       modifiedAt: t.modifiedAt || '',
     }))
 

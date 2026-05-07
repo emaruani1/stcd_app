@@ -110,17 +110,31 @@ export default function SavedCards({ currentMember }) {
 
   return (
     <div style={wrap}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 12, marginBottom: 24 }}>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 28 }}>Saved Cards</h1>
           <p style={{ color: '#71717a', margin: '4px 0 0' }}>
-            Securely stored at FideliPay/Sola. Use any saved card to pay dues, donations, or sponsorships.
+            Use any saved card to pay dues, donations, or sponsorships.
           </p>
         </div>
         {!showAdd && (
           <button onClick={() => setShowAdd(true)} style={primaryBtn}>＋ Add a card</button>
         )}
       </header>
+      <div
+        style={{
+          background: '#f0fdf4',
+          border: '1px solid #bbf7d0',
+          color: '#065f46',
+          padding: '12px 16px',
+          borderRadius: 12,
+          marginBottom: 24,
+          fontSize: 13,
+          lineHeight: 1.5,
+        }}
+      >
+        <strong>🔒 Your card information is fully secure.</strong> We do not store your card number, expiration date, or CVV in the synagogue&apos;s database — that data lives only inside the bank&apos;s certified payment processor (PCI-DSS Level 1). The portal only keeps a token that lets the processor recognize your card next time you choose to pay.
+      </div>
 
       {error && <div style={alertErr}>{error}</div>}
       {info && <div style={alertOk}>{info}</div>}
