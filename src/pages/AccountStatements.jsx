@@ -131,73 +131,153 @@ export default function AccountStatements({
     return <span className={`badge ${cls}`}>{paymentTypeLabel(type)}</span>
   }
 
+  // Helpers used by both CSV + PDF exports.
+  const csvCell = (v) => {
+    const s = (v ?? '').toString()
+    if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+      return `"${s.replace(/"/g, '""')}"`
+    }
+    return s
+  }
+  const signedAmount = (t) => {
+    const sign = t.balanceImpact === 'charge' ? -1 : t.balanceImpact === 'payment' ? 1 : 0
+    if (sign === 0) return Number(t.amount).toFixed(2)
+    return (sign * Number(t.amount)).toFixed(2)
+  }
+  const runningBalanceCell = (t) =>
+    t.balanceImpact === 'neutral' ? '' : Number(t.runningBalance).toFixed(2)
+
   const downloadCSV = () => {
     const hasAliases = memberAliases.length > 0
-    const headers = hasAliases
-      ? ['Date', 'Description', 'Paying As', 'Type', 'Amount', 'Method']
-      : ['Date', 'Description', 'Type', 'Amount', 'Method']
-    const rows = filtered.map(t => {
-      const base = [
-        t.date,
-        `"${t.description}"`,
-        ...(hasAliases ? [`"${t.alias || `${member.firstName} ${member.lastName}`}"`] : []),
-        t.paymentType || '',
-        t.amount.toFixed(2),
-        t.method || '',
-      ]
-      return base
-    })
+    const headers = [
+      'Date', 'Description',
+      ...(hasAliases ? ['Paying As'] : []),
+      'Type', 'Amount', 'Running Balance', 'Method', 'Gateway Ref', 'Auth Code', 'Logged By', 'Logged At',
+    ]
+    const rows = filtered.map(t => [
+      t.date,
+      csvCell(t.description),
+      ...(hasAliases ? [csvCell(t.alias || `${member.firstName} ${member.lastName}`)] : []),
+      csvCell(paymentTypeLabel(t.paymentType)),
+      signedAmount(t),
+      runningBalanceCell(t),
+      csvCell(t.method || ''),
+      csvCell(t.gatewayRefNum || ''),
+      csvCell(t.gatewayAuthCode || ''),
+      csvCell(t.createdByName || t.createdBy || ''),
+      csvCell(t.createdAt || ''),
+    ])
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `statement_${member?.firstName || 'member'}_${startDate}_${endDate}.csv`
+    a.download = `statement_${member?.firstName || 'member'}_${startDate || 'all'}_${endDate || 'present'}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
 
   const downloadPDF = () => {
     const printWindow = window.open('', '_blank')
-    if (!printWindow) return
+    if (!printWindow) {
+      alert('Pop-ups are blocked. Please allow pop-ups for this site to download the PDF.')
+      return
+    }
     const memberName = member ? `${member.firstName} ${member.lastName}` : 'Member'
+    const escapeHTML = (s) => (s ?? '').toString()
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+    const fmtMoney = (n) => {
+      const v = Number(n) || 0
+      return (v < 0 ? '-' : '') + '$' + Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    }
+    const colCount = memberAliases.length > 0 ? 7 : 6
+    const periodLabel = `${startDate ? formatDate(startDate) : 'All time'} – ${endDate ? formatDate(endDate) : 'Present'}`
+
+    const rowsHtml = filtered.map(t => {
+      const sign = t.balanceImpact === 'charge' ? '-' : t.balanceImpact === 'payment' ? '+' : ''
+      const amtClass = t.balanceImpact === 'charge' ? 'neg' : t.balanceImpact === 'payment' ? 'pos' : ''
+      const runningHtml = t.balanceImpact === 'neutral'
+        ? '—'
+        : (Number(t.runningBalance) < 0
+            ? `-$${Math.abs(Number(t.runningBalance)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+            : `$${Number(t.runningBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+      const runningClass = t.balanceImpact === 'neutral' ? 'muted' : (Number(t.runningBalance) < 0 ? 'neg' : 'pos')
+      return `<tr>
+        <td>${formatDate(t.date)}</td>
+        <td>${escapeHTML(t.description)}</td>
+        ${memberAliases.length > 0 ? `<td>${escapeHTML(t.alias || `${member.firstName} ${member.lastName}`)}</td>` : ''}
+        <td>${escapeHTML(paymentTypeLabel(t.paymentType))}</td>
+        <td class="amount ${amtClass}">${sign}${fmtMoney(t.amount).replace('-', '')}</td>
+        <td class="amount ${runningClass}">${runningHtml}</td>
+        <td>${escapeHTML(t.method || '')}</td>
+      </tr>`
+    }).join('')
+
     const html = `
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Account Statement - ${memberName}</title>
+        <meta charset="utf-8" />
+        <title>Account Statement - ${escapeHTML(memberName)}</title>
         <style>
-          body { font-family: Arial, sans-serif; padding: 20px; color: #333; }
-          h1 { font-size: 18px; margin-bottom: 4px; }
-          h2 { font-size: 14px; color: #666; margin-top: 0; }
-          .summary { display: flex; gap: 20px; margin: 16px 0; }
-          .summary-item { background: #f5f5f5; padding: 10px 16px; border-radius: 6px; }
-          .summary-item strong { display: block; font-size: 18px; }
-          table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-          th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #ddd; font-size: 12px; }
-          th { background: #f5f5f5; font-weight: 600; }
-          .amount { text-align: right; }
-          .total-row { font-weight: bold; background: #f0f0f0; }
-          .footer { margin-top: 24px; font-size: 11px; color: #999; }
+          body { font-family: Arial, sans-serif; padding: 20px; color: #2d3748; }
+          h1 { font-size: 18px; margin: 0 0 4px; color: #1a365d; }
+          h2 { font-size: 13px; color: #5a6577; margin: 0 0 16px; font-weight: 500; }
+          .summary { display: flex; gap: 12px; margin: 16px 0; flex-wrap: wrap; }
+          .summary-item { background: #f5f0e8; padding: 8px 14px; border-radius: 8px; border-left: 3px solid #c6973f; min-width: 140px; }
+          .summary-item .label { font-size: 11px; color: #5a6577; text-transform: uppercase; letter-spacing: 0.5px; }
+          .summary-item strong { display: block; font-size: 16px; margin-top: 2px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+          th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid #ddd; font-size: 11px; }
+          th { background: #1a365d; color: #fff; font-weight: 600; }
+          .amount { text-align: right; font-variant-numeric: tabular-nums; }
+          .pos { color: #2f855a; font-weight: 600; }
+          .neg { color: #c53030; font-weight: 600; }
+          .muted { color: #8896a8; }
+          .footer { margin-top: 20px; font-size: 10px; color: #8896a8; border-top: 1px solid #ddd; padding-top: 10px; }
+          @media print { body { padding: 0; } .no-print { display: none; } }
         </style>
       </head>
       <body>
         <h1>Sephardic Torah Center of Dallas</h1>
-        <h2>Account Statement - ${memberName}</h2>
-        <p>Period: ${startDate ? formatDate(startDate) : 'All time'} - ${endDate ? formatDate(endDate) : 'Present'}</p>
+        <h2>Account Statement — ${escapeHTML(memberName)}</h2>
+        <p style="font-size: 12px; color: #5a6577; margin: 0 0 12px;">Period: ${escapeHTML(periodLabel)}</p>
         <div class="summary">
-          <div class="summary-item">Total: <strong>$${totals.total.toLocaleString()}</strong></div>
-          <div class="summary-item">Donations: <strong>$${totals.donation.toLocaleString()}</strong></div>
-          <div class="summary-item">Pledges: <strong>$${totals.pledge.toLocaleString()}</strong></div>
+          <div class="summary-item">
+            <div class="label">Account Balance</div>
+            <strong style="color: ${accountBalance < 0 ? '#c53030' : '#2f855a'}">${fmtMoney(accountBalance)}</strong>
+          </div>
+          <div class="summary-item">
+            <div class="label">Account Credit</div>
+            <strong>${fmtMoney(accountCredit)}</strong>
+          </div>
+          <div class="summary-item">
+            <div class="label">Period Charges</div>
+            <strong class="neg">-${fmtMoney(totals.charges)}</strong>
+          </div>
+          <div class="summary-item">
+            <div class="label">Period Payments</div>
+            <strong class="pos">+${fmtMoney(totals.payments)}</strong>
+          </div>
         </div>
         <table>
-          <thead><tr><th>Date</th><th>Description</th>${memberAliases.length > 0 ? '<th>Paying As</th>' : ''}<th>Type</th><th class="amount">Amount</th><th>Method</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              ${memberAliases.length > 0 ? '<th>Paying As</th>' : ''}
+              <th>Type</th>
+              <th class="amount">Amount</th>
+              <th class="amount">Running Balance</th>
+              <th>Method</th>
+            </tr>
+          </thead>
           <tbody>
-            ${filtered.map(t => `<tr><td>${formatDate(t.date)}</td><td>${t.description}</td>${memberAliases.length > 0 ? `<td>${t.alias || `${member.firstName} ${member.lastName}`}</td>` : ''}<td>${t.paymentType || ''}</td><td class="amount">$${t.amount.toLocaleString()}</td><td>${t.method || ''}</td></tr>`).join('')}
-            <tr class="total-row"><td colspan="${memberAliases.length > 0 ? 4 : 3}">Total</td><td class="amount">$${totals.total.toLocaleString()}</td><td></td></tr>
+            ${rowsHtml || `<tr><td colspan="${colCount}" style="text-align:center;color:#8896a8;padding:20px;">No transactions in this period</td></tr>`}
           </tbody>
         </table>
-        <div class="footer">Generated on ${new Date().toLocaleDateString()}</div>
+        <div class="footer">Generated ${new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</div>
       </body>
       </html>
     `
