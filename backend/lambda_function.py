@@ -40,6 +40,11 @@ SOLA_API_VERSION = '5.0.0'
 ALLOWED_ORIGINS = [
     'https://main.dvy7odxzbdj95.amplifyapp.com',
 ]
+# Localhost allowance is OFF by default — flip ALLOW_LOCAL_DEV=true on the
+# Lambda env when developing against the live API. With ACAC=true and a
+# wildcard localhost rule, an attacker on the same machine (or via DNS
+# rebinding) could CSRF authenticated requests against this API.
+ALLOW_LOCAL_DEV = os.environ.get('ALLOW_LOCAL_DEV', 'false').lower() in ('true', '1', 'yes')
 
 
 def _origin_allowed(origin):
@@ -47,8 +52,7 @@ def _origin_allowed(origin):
         return False
     if origin in ALLOWED_ORIGINS:
         return True
-    # Allow any localhost / 127.0.0.1 port in dev
-    if origin.startswith('http://localhost:') or origin.startswith('http://127.0.0.1:'):
+    if ALLOW_LOCAL_DEV and (origin.startswith('http://localhost:') or origin.startswith('http://127.0.0.1:')):
         return True
     return False
 
@@ -239,6 +243,51 @@ def _system_stamp_create():
         'createdByMemberId': '',
         'createdAt': _now_iso(),
     }
+
+
+# ===== Authorization helpers =====
+def _is_admin():
+    return _get_actor()['role'] == 'admin'
+
+
+def _is_pledger():
+    return _get_actor()['role'] == 'pledger'
+
+
+def _is_self(member_id):
+    if not member_id:
+        return False
+    actor_member_id = _get_actor()['memberId']
+    if not actor_member_id:
+        return False
+    return str(actor_member_id) == str(member_id)
+
+
+def _forbid(reason='Forbidden'):
+    return respond(403, {'error': reason})
+
+
+# Fields a non-admin (i.e. the member themselves) is allowed to edit on their
+# own record via PUT /members/:id. Anything outside this set is silently
+# stripped from the request body before update_member runs the DynamoDB write,
+# so members cannot grant themselves admin perks, change membership plan,
+# alter their balance, etc.
+MEMBER_SELF_EDITABLE_FIELDS = {
+    'firstName', 'lastName', 'gender', 'email', 'phone', 'dob',
+    'address', 'addressLine2', 'city', 'state', 'zip',
+    'spouseName', 'spouseGender', 'spouseDob', 'marriageDate',
+    'yahrzeits', 'children',
+}
+
+
+def _escape_cognito_filter_value(value):
+    """
+    Escape user input before interpolating into a Cognito ListUsers Filter.
+    Cognito's filter language treats backslash and double-quote specially.
+    """
+    if not value:
+        return ''
+    return str(value).replace('\\', '\\\\').replace('"', '\\"')
 
 
 def parse_body(event):
@@ -531,10 +580,26 @@ def get_members(event):
 
     # Sort by lastName, firstName
     items.sort(key=lambda x: (x.get('lastName', '').lower(), x.get('firstName', '').lower()))
+
+    # PII gate: admins and pledgers see all member fields. Members see their
+    # own full record + slim records (id + names + aliases + gender) for
+    # everyone else — no addresses, phones, balances, or family details leak
+    # cross-member.
+    if not (_is_admin() or _is_pledger()):
+        actor_mid = str(_get_actor().get('memberId') or '')
+        slim = {'memberId', 'firstName', 'lastName', 'aliases', 'gender'}
+        items = [
+            m if str(m.get('memberId', '')) == actor_mid
+            else {k: v for k, v in m.items() if k in slim}
+            for m in items
+        ]
+
     return respond(200, items)
 
 
 def get_member(member_id):
+    if not (_is_admin() or _is_pledger() or _is_self(member_id)):
+        return _forbid()
     result = members_table.get_item(Key={'memberId': member_id})
     item = result.get('Item')
     if not item:
@@ -550,6 +615,8 @@ def get_member(member_id):
 
 
 def create_member(body):
+    if not _is_admin():
+        return _forbid()
     member_id = body.get('memberId', str(uuid.uuid4())[:8])
     body['memberId'] = member_id
     body['balance'] = Decimal(str(body.get('balance', 0)))
@@ -559,6 +626,15 @@ def create_member(body):
 
 
 def update_member(member_id, body):
+    if not (_is_admin() or _is_self(member_id)):
+        return _forbid()
+
+    # When a member edits their own record, drop any field they're not allowed
+    # to change. This stops e.g. balance, membershipPlan, contactType,
+    # autopay* tampering through PUT /members/:id.
+    if not _is_admin():
+        body = {k: v for k, v in body.items() if k in MEMBER_SELF_EDITABLE_FIELDS}
+
     # First fetch existing member to avoid overwriting with empty values
     existing = members_table.get_item(Key={'memberId': member_id}).get('Item', {})
 
@@ -605,6 +681,8 @@ def update_member(member_id, body):
 
 
 def merge_members(body):
+    if not _is_admin():
+        return _forbid()
     primary_id = body['primaryId']
     secondary_id = body['secondaryId']
     field_values = body.get('fieldValues', {})
@@ -660,6 +738,8 @@ def merge_members(body):
 # ===================== TRANSACTIONS =====================
 
 def get_transactions(event):
+    if not _is_admin():
+        return _forbid()
     qs = event.get('queryStringParameters') or {}
 
     # If yearMonth provided, use GSI
@@ -683,6 +763,8 @@ def get_transactions(event):
 
 
 def get_member_transactions(member_id, event):
+    if not (_is_admin() or _is_self(member_id)):
+        return _forbid()
     result = transactions_table.query(
         KeyConditionExpression=Key('memberId').eq(member_id),
     )
@@ -693,6 +775,8 @@ def get_member_transactions(member_id, event):
 
 def create_transaction(body):
     member_id = body['memberId']
+    if not (_is_admin() or _is_self(member_id)):
+        return _forbid()
     date = body.get('date', '')
     txn_id = f"TXN#{date}#{uuid.uuid4().hex[:8]}"
     payment_type = body.get('paymentType', '')
@@ -775,6 +859,8 @@ def create_charge_payment_pair(body):
       [balanceApplied]
     """
     member_id = body.get('memberId')
+    if not (_is_admin() or _is_self(member_id)):
+        return _forbid()
     date = body.get('date') or time.strftime('%Y-%m-%d', time.gmtime())
     amount = body.get('amount')
     kind = (body.get('kind') or 'charge').lower()
@@ -818,6 +904,8 @@ def create_charge_payment_pair(body):
 
 def set_member_autopay(member_id, body):
     """PUT /members/:id/autopay  body: {enabled: bool, paymentMethodId: str}"""
+    if not (_is_admin() or _is_self(member_id)):
+        return _forbid()
     enabled = bool(body.get('enabled'))
     payment_method_id = body.get('paymentMethodId') or ''
     if enabled and not payment_method_id:
@@ -874,6 +962,8 @@ def charge_membership_fee(body):
       - On Sola approval, writes the membership-payment row sharing pairId with
         an updated fee row so the two can be linked.
     """
+    if not _is_admin():
+        return _forbid()
     member_id = str(body.get('memberId') or '')
     fee_txn_id = body.get('feeTransactionId') or ''
     payment_method_id = body.get('paymentMethodId') or ''
@@ -1069,6 +1159,8 @@ def run_monthly_membership_billing():
 
 
 def update_transaction(body):
+    if not _is_admin():
+        return _forbid()
     member_id = body['memberId']
     txn_id = body['transactionId']
 
@@ -1114,6 +1206,8 @@ def update_transaction(body):
 
 
 def delete_transaction(body):
+    if not _is_admin():
+        return _forbid()
     member_id = body['memberId']
     txn_id = body['transactionId']
     transactions_table.delete_item(Key={'memberId': member_id, 'transactionId': txn_id})
@@ -1123,6 +1217,8 @@ def delete_transaction(body):
 # ===================== PLEDGES =====================
 
 def get_pledges(event):
+    if not _is_admin():
+        return _forbid()
     result = pledges_table.scan()
     items = result['Items']
     while 'LastEvaluatedKey' in result:
@@ -1133,6 +1229,8 @@ def get_pledges(event):
 
 
 def get_member_pledges(member_id):
+    if not (_is_admin() or _is_self(member_id)):
+        return _forbid()
     result = pledges_table.query(
         KeyConditionExpression=Key('memberId').eq(member_id),
     )
@@ -1142,6 +1240,8 @@ def get_member_pledges(member_id):
 
 
 def create_pledge(body):
+    if not (_is_admin() or _is_pledger()):
+        return _forbid()
     member_id = body['memberId']
     date = body.get('date', '')
     pledge_id = f"PLG#{date}#{uuid.uuid4().hex[:8]}"
@@ -1187,6 +1287,8 @@ def create_pledge(body):
 
 
 def update_pledge(body):
+    if not _is_admin():
+        return _forbid()
     member_id = body['memberId']
     pledge_id = body['pledgeId']
 
@@ -1253,6 +1355,8 @@ def update_pledge(body):
 def pay_pledge(body):
     """Record a payment against a pledge. Creates a transaction and updates the pledge."""
     member_id = body['memberId']
+    if not (_is_admin() or _is_self(member_id)):
+        return _forbid()
     pledge_id = body['pledgeId']
     amount = Decimal(str(body.get('amount', 0)))
     method = body.get('method', '')
@@ -1318,6 +1422,8 @@ def pay_pledge(body):
 
 
 def delete_pledge(body):
+    if not _is_admin():
+        return _forbid()
     member_id = body['memberId']
     pledge_id = body['pledgeId']
     pledges_table.delete_item(Key={'memberId': member_id, 'pledgeId': pledge_id})
@@ -1372,6 +1478,8 @@ def get_setting(key):
 
 
 def update_setting(key, body):
+    if not _is_admin():
+        return _forbid()
     items = body.get('items', [])
     settings_table.put_item(Item={
         'settingKey': key,
@@ -1395,6 +1503,11 @@ def get_sponsorships():
 
 def update_sponsorship(date_key, body):
     """Update or create a sponsorship for a given Saturday date."""
+    # Both kiddush and seuda payloads carry memberId of the booking member;
+    # admin can do either. A member can only book on their own behalf.
+    booking_member_id = (body.get('kiddush') or {}).get('memberId') or (body.get('seuda') or {}).get('memberId')
+    if not (_is_admin() or _is_self(booking_member_id)):
+        return _forbid()
     item = {'dateKey': date_key}
     if 'kiddush' in body:
         item['kiddush'] = body['kiddush']
@@ -1413,6 +1526,8 @@ def update_sponsorship(date_key, body):
 
 def delete_sponsorship(date_key, body):
     """Remove a kiddush or seuda booking, or unblock a date."""
+    if not _is_admin():
+        return _forbid()
     field = body.get('field')  # 'kiddush', 'seuda', or 'blocked'
     if not field:
         sponsorships_table.delete_item(Key={'dateKey': date_key})
@@ -1433,6 +1548,8 @@ def delete_sponsorship(date_key, body):
 # ===================== EMAILS =====================
 
 def get_emails():
+    if not _is_admin():
+        return _forbid()
     result = emails_table.scan()
     items = result['Items']
     while 'LastEvaluatedKey' in result:
@@ -1443,6 +1560,8 @@ def get_emails():
 
 
 def create_email(body):
+    if not _is_admin():
+        return _forbid()
     email_id = f"EML#{uuid.uuid4().hex[:12]}"
     item = {
         'emailId': email_id,
@@ -1462,6 +1581,8 @@ def create_email(body):
 
 def cognito_lookup_user(body):
     """Look up a Cognito user by email. Returns user info or {found: false}."""
+    if not _is_admin():
+        return _forbid()
     email = body.get('email', '').strip()
     if not email:
         return respond(400, {'error': 'email is required'})
@@ -1471,7 +1592,7 @@ def cognito_lookup_user(body):
         for attempt in [email, email.lower()]:
             result = cognito.list_users(
                 UserPoolId=COGNITO_POOL_ID,
-                Filter=f'email = "{attempt}"',
+                Filter=f'email = "{_escape_cognito_filter_value(attempt)}"',
                 Limit=1,
             )
             users = result.get('Users', [])
@@ -1502,7 +1623,7 @@ def _resolve_cognito_username(email):
     for attempt in [email, email.lower()]:
         result = cognito.list_users(
             UserPoolId=COGNITO_POOL_ID,
-            Filter=f'email = "{attempt}"',
+            Filter=f'email = "{_escape_cognito_filter_value(attempt)}"',
             Limit=1,
         )
         users = result.get('Users', [])
@@ -1513,6 +1634,8 @@ def _resolve_cognito_username(email):
 
 def cognito_create_user(body):
     """Create a Cognito user with the given email. Admin-only."""
+    if not _is_admin():
+        return _forbid()
     email = body.get('email', '').strip().lower()
     role = body.get('role', 'member')
     member_id = body.get('memberId', '')
@@ -1544,6 +1667,8 @@ def cognito_create_user(body):
 
 def cognito_disable_user(body):
     """Disable a Cognito user account."""
+    if not _is_admin():
+        return _forbid()
     email = body.get('email', '').strip()
     if not email:
         return respond(400, {'error': 'email is required'})
@@ -1559,6 +1684,8 @@ def cognito_disable_user(body):
 
 def cognito_enable_user(body):
     """Enable a Cognito user account."""
+    if not _is_admin():
+        return _forbid()
     email = body.get('email', '').strip()
     if not email:
         return respond(400, {'error': 'email is required'})
@@ -1574,6 +1701,8 @@ def cognito_enable_user(body):
 
 def cognito_reset_password(body):
     """Force a password reset — sends a new temporary password via email."""
+    if not _is_admin():
+        return _forbid()
     email = body.get('email', '').strip()
     if not email:
         return respond(400, {'error': 'email is required'})
@@ -1593,6 +1722,8 @@ def cognito_resend_invite(body):
     Only valid for users still in FORCE_CHANGE_PASSWORD state. For users who
     already set a permanent password, use cognito_reset_password instead.
     """
+    if not _is_admin():
+        return _forbid()
     email = body.get('email', '').strip().lower()
     if not email:
         return respond(400, {'error': 'email is required'})
@@ -1615,6 +1746,8 @@ def cognito_resend_invite(body):
 
 def cognito_update_role(body):
     """Update a Cognito user's role attribute."""
+    if not _is_admin():
+        return _forbid()
     email = body.get('email', '').strip()
     role = body.get('role', 'member')
     if not email:
@@ -1716,6 +1849,8 @@ def create_payment_method(body):
     xCardNum and xCVV should be SUTs from iFields.
     """
     member_id = body.get('memberId')
+    if not (_is_admin() or _is_self(member_id)):
+        return _forbid()
     sut_card = body.get('xCardNum') or ''
     exp = (body.get('xExp') or '').strip()
     sut_cvv = body.get('xCVV') or ''
@@ -1753,7 +1888,10 @@ def create_payment_method(body):
     last4 = ''.join(c for c in masked if c.isdigit())[-4:]
 
     if not x_token:
-        return respond(502, {'error': 'Sola did not return a token', 'gateway': resp})
+        # Don't echo the full gateway response — log it for ops, return a
+        # safe message to the client.
+        print(f"[sola] cc:save returned no xToken: {resp}")
+        return respond(502, {'error': 'Card vault rejected the card. Please try again.'})
 
     payment_method_id = f"pm_{uuid.uuid4().hex[:12]}"
 
@@ -1798,6 +1936,8 @@ def list_payment_methods(member_id):
     """Return all saved cards for a member, freshest first."""
     if not member_id:
         return respond(400, {'error': 'memberId required'})
+    if not (_is_admin() or _is_self(member_id)):
+        return _forbid()
     key_value = int(member_id) if str(member_id).isdigit() else member_id
     res = payment_methods_table.query(
         KeyConditionExpression=Key('memberId').eq(key_value)
@@ -1827,6 +1967,8 @@ def delete_payment_method(body):
     payment_method_id = body.get('paymentMethodId')
     if not member_id or not payment_method_id:
         return respond(400, {'error': 'memberId and paymentMethodId are required'})
+    if not (_is_admin() or _is_self(member_id)):
+        return _forbid()
     key_value = int(member_id) if str(member_id).isdigit() else member_id
     payment_methods_table.delete_item(Key={
         'memberId': key_value,
@@ -1862,6 +2004,8 @@ def charge_saved_card(body):
       saveOnSuccess: true (mode B only) -> also persist as a saved payment method on success
     """
     member_id = body.get('memberId')
+    if not (_is_admin() or _is_self(member_id)):
+        return _forbid()
     amount = body.get('amount')
     payment_method_id = body.get('paymentMethodId') or ''
     sut_card = body.get('xCardNum') or ''
