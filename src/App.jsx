@@ -61,7 +61,6 @@ function App() {
   const [sentEmails, setSentEmails] = useState([])
   const [templates, setTemplates] = useState({})
   const [bookedSponsors, setBookedSponsors] = useState({})
-  const [profileData, setProfileData] = useState(null)
   const [memberBalances, setMemberBalances] = useState({})
 
   // Admin impersonation
@@ -710,9 +709,8 @@ function App() {
           element={
             <Profile
               currentMember={currentMember}
-              profileData={profileData}
-              setProfileData={setProfileData}
               userRole={userRole}
+              refreshData={refreshData}
             />
           }
         />

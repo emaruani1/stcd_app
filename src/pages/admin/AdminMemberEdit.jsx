@@ -27,6 +27,16 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
   const [originalForm, setOriginalForm] = useState(null)
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+
+  const startEditing = () => {
+    if (form) setOriginalForm(JSON.parse(JSON.stringify(form)))
+    setIsEditing(true)
+  }
+  const cancelEditing = () => {
+    if (originalForm) setForm(JSON.parse(JSON.stringify(originalForm)))
+    setIsEditing(false)
+  }
 
   // Cognito user state
   const [cognitoUser, setCognitoUser] = useState(null) // null=loading, {found:false}, or user object
@@ -266,6 +276,7 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
       await api.updateMember(String(memberId), changes)
       setToast('Profile saved successfully!')
       setOriginalForm(JSON.parse(JSON.stringify(form)))
+      setIsEditing(false)
       setTimeout(() => setToast(''), 3000)
       if (refreshData) refreshData()
     } catch (err) {
@@ -356,9 +367,37 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
             </span>
           </p>
         </div>
-        <button className="modal-btn-secondary" style={{ padding: '10px 20px' }} onClick={() => navigate('/admin/members')}>
-          Back to Members
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {!isEditing ? (
+            <>
+              <button className="pay-btn" style={{ padding: '10px 20px' }} onClick={startEditing}>
+                Edit
+              </button>
+              <button className="modal-btn-secondary" style={{ padding: '10px 20px' }} onClick={() => navigate('/admin/members')}>
+                Back to Members
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className="modal-btn-secondary"
+                style={{ padding: '10px 20px' }}
+                onClick={cancelEditing}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+              <button
+                className="pay-btn"
+                style={{ padding: '10px 20px' }}
+                onClick={handleSave}
+                disabled={saving}
+              >
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {toast && <div className="success-toast">{toast}</div>}
@@ -534,6 +573,7 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
       {/* Personal Info */}
       <div className="profile-section">
         <h2 className="profile-section-title">Personal Information</h2>
+        <fieldset disabled={!isEditing} style={{ border: 'none', padding: 0, margin: 0 }}>
         <div className="profile-form-grid">
           <div className="form-group">
             <label>First Name</label>
@@ -569,11 +609,13 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
             <input type="text" value={form.dearWho} onChange={e => updateField('dearWho', e.target.value)} placeholder="e.g. David" />
           </div>
         </div>
+        </fieldset>
       </div>
 
       {/* Address */}
       <div className="profile-section">
         <h2 className="profile-section-title">Address</h2>
+        <fieldset disabled={!isEditing} style={{ border: 'none', padding: 0, margin: 0 }}>
         <div className="profile-form-grid">
           <div className="form-group full-width">
             <label>Street Address</label>
@@ -596,11 +638,13 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
             <input type="text" value={form.zip} onChange={e => updateField('zip', e.target.value)} maxLength="10" />
           </div>
         </div>
+        </fieldset>
       </div>
 
       {/* Spouse */}
       <div className="profile-section">
         <h2 className="profile-section-title">Spouse</h2>
+        <fieldset disabled={!isEditing} style={{ border: 'none', padding: 0, margin: 0 }}>
         <div className="profile-form-grid">
           <div className="form-group">
             <label>Spouse Name</label>
@@ -617,11 +661,13 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
           {renderDateInput('Spouse DOB', 'spouseDob', 'spouseDobIsHebrew', 'spouseDobHebrew')}
           {renderDateInput('Marriage Date', 'marriageDate', 'marriageDateIsHebrew', 'marriageDateHebrew')}
         </div>
+        </fieldset>
       </div>
 
       {/* Membership */}
       <div className="profile-section">
         <h2 className="profile-section-title">Membership</h2>
+        <fieldset disabled={!isEditing} style={{ border: 'none', padding: 0, margin: 0 }}>
         <div className="profile-form-grid">
           <div className="form-group">
             <label>Contact Type</label>
@@ -696,11 +742,13 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
             </p>
           </div>
         </div>
+        </fieldset>
       </div>
 
       {/* Yahrzeits */}
       <div className="profile-section">
         <h2 className="profile-section-title">Yahrzeit Dates</h2>
+        <fieldset disabled={!isEditing} style={{ border: 'none', padding: 0, margin: 0 }}>
         <div className="dynamic-list">
           {form.yahrzeits.map((y, idx) => (
             <div key={idx} className="dynamic-list-item">
@@ -736,11 +784,13 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
           ))}
         </div>
         <button className="add-item-btn" onClick={addYahrzeit}>+ Add Yahrzeit</button>
+        </fieldset>
       </div>
 
       {/* Children */}
       <div className="profile-section">
         <h2 className="profile-section-title">Children</h2>
+        <fieldset disabled={!isEditing} style={{ border: 'none', padding: 0, margin: 0 }}>
         <div className="dynamic-list">
           {form.children.map((c, idx) => (
             <div key={idx} className="dynamic-list-item">
@@ -773,17 +823,30 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
           ))}
         </div>
         <button className="add-item-btn" onClick={addChild}>+ Add Child</button>
+        </fieldset>
       </div>
 
-      {/* Save */}
-      <div className="profile-save-row">
-        <button className="modal-btn-secondary" style={{ padding: '12px 24px', marginRight: '0.75rem' }} onClick={() => navigate('/admin/members')}>
-          Cancel
-        </button>
-        <button className="pay-btn" style={{ padding: '12px 32px' }} onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving...' : 'Save Profile'}
-        </button>
-      </div>
+      {/* Save (mirrored at bottom only when editing) */}
+      {isEditing && (
+        <div className="profile-save-row">
+          <button
+            className="modal-btn-secondary"
+            style={{ padding: '12px 24px', marginRight: '0.75rem' }}
+            onClick={cancelEditing}
+            disabled={saving}
+          >
+            Cancel
+          </button>
+          <button
+            className="pay-btn"
+            style={{ padding: '12px 32px' }}
+            onClick={handleSave}
+            disabled={saving}
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

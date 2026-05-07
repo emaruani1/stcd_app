@@ -18,34 +18,47 @@ const PARSHIYOT = [
 
 const emptyChild = () => ({ name: '', gender: '', date: '', useHebrew: false, hebrewDay: '', hebrewMonth: '', hebrewYear: '', parasha: '' })
 
-export default function Profile({ currentMember, profileData, setProfileData, userRole }) {
+const formFromMember = (m) => ({
+  firstName: m.firstName || '',
+  lastName: m.lastName || '',
+  gender: m.gender || '',
+  email: m.email || '',
+  phone: m.phone || '',
+  address: m.address || '',
+  city: m.city || '',
+  state: m.state || '',
+  zip: m.zip || '',
+  dob: m.dob || '',
+  dobIsHebrew: false,
+  dobHebrew: { day: '', month: '', year: '' },
+  marriageDate: m.marriageDate || '',
+  marriageDateIsHebrew: false,
+  marriageDateHebrew: { day: '', month: '', year: '' },
+  spouseName: m.spouseName || '',
+  spouseGender: m.spouseGender || '',
+  yahrzeits: (m.yahrzeits || []).map(y => ({ ...y, useHebrew: false })),
+  children: (m.children || []).map(c => ({ ...c, useHebrew: false })),
+})
+
+export default function Profile({ currentMember, userRole, refreshData }) {
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
 
-  const [form, setForm] = useState(() => profileData || {
-    firstName: currentMember.firstName,
-    lastName: currentMember.lastName,
-    gender: currentMember.gender || '',
-    email: currentMember.email,
-    phone: currentMember.phone,
-    address: '',
-    city: '',
-    state: '',
-    zip: '',
-    dob: '',
-    dobIsHebrew: false,
-    dobHebrew: { day: '', month: '', year: '' },
-    marriageDate: '',
-    marriageDateIsHebrew: false,
-    marriageDateHebrew: { day: '', month: '', year: '' },
-    spouseName: '',
-    spouseGender: '',
-    yahrzeits: [],
-    children: [],
-  })
+  const [form, setForm] = useState(() => formFromMember(currentMember))
+  const [originalForm, setOriginalForm] = useState(() => formFromMember(currentMember))
 
+  // Re-hydrate when the underlying member record changes (e.g. after refreshData)
+  // and we're not actively editing — never clobber an in-progress edit.
   useEffect(() => {
-    if (profileData) setForm(profileData)
-  }, [profileData])
+    if (!isEditing) {
+      const fresh = formFromMember(currentMember)
+      setForm(fresh)
+      setOriginalForm(fresh)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMember])
 
   const updateField = (field, value) => {
     setForm(prev => ({ ...prev, [field]: value }))
@@ -86,10 +99,51 @@ export default function Profile({ currentMember, profileData, setProfileData, us
     }))
   }
 
-  const handleSave = () => {
-    setProfileData(form)
-    setSaveSuccess(true)
-    setTimeout(() => setSaveSuccess(false), 3000)
+  const handleEdit = () => {
+    setOriginalForm(JSON.parse(JSON.stringify(form)))
+    setIsEditing(true)
+    setSaveError('')
+    setSaveSuccess(false)
+  }
+
+  const handleCancel = () => {
+    setForm(JSON.parse(JSON.stringify(originalForm)))
+    setIsEditing(false)
+    setSaveError('')
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    setSaveError('')
+    try {
+      const payload = {
+        firstName: form.firstName,
+        lastName: form.lastName,
+        gender: form.gender,
+        email: form.email,
+        phone: form.phone,
+        address: form.address,
+        city: form.city,
+        state: form.state,
+        zip: form.zip,
+        dob: form.dob,
+        marriageDate: form.marriageDate,
+        spouseName: form.spouseName,
+        spouseGender: form.spouseGender,
+        yahrzeits: form.yahrzeits.map(({ useHebrew, ...y }) => y),
+        children: form.children.map(({ useHebrew, ...c }) => c),
+      }
+      await api.updateMember(String(currentMember.id || currentMember.memberId), payload)
+      setSaveSuccess(true)
+      setIsEditing(false)
+      setOriginalForm(JSON.parse(JSON.stringify(form)))
+      setTimeout(() => setSaveSuccess(false), 3000)
+      if (refreshData) refreshData()
+    } catch (err) {
+      setSaveError(err.message || 'Could not save profile. Please try again.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   // Reusable per-field date input with its own Hebrew/Gregorian toggle
@@ -210,17 +264,52 @@ export default function Profile({ currentMember, profileData, setProfileData, us
       <div className="page-title-row">
         <div>
           <h1 className="page-title">My Profile</h1>
-          <p className="page-subtitle">Manage your personal information</p>
+          <p className="page-subtitle">
+            {isEditing ? 'Edit your information, then click Save.' : 'Manage your personal information'}
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {!isEditing ? (
+            <button className="pay-btn" style={{ padding: '10px 22px' }} onClick={handleEdit}>
+              Edit
+            </button>
+          ) : (
+            <>
+              <button
+                className="modal-btn-secondary"
+                style={{ padding: '10px 22px' }}
+                onClick={handleCancel}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+              <button
+                className="pay-btn"
+                style={{ padding: '10px 22px' }}
+                onClick={handleSave}
+                disabled={saving}
+              >
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {saveSuccess && (
         <div className="success-toast">Profile saved successfully!</div>
       )}
+      {saveError && (
+        <div style={{
+          padding: '10px 14px', borderRadius: 'var(--radius-sm)', marginBottom: '12px', fontSize: '0.85rem',
+          color: 'var(--danger)', background: 'var(--danger-bg, #fee)',
+        }}>{saveError}</div>
+      )}
 
       {/* Personal Info */}
       <div className="profile-section">
         <h2 className="profile-section-title">Personal Information</h2>
+        <fieldset disabled={!isEditing} style={{ border: 'none', padding: 0, margin: 0 }}>
         <div className="profile-form-grid">
           <div className="form-group">
             <label>First Name</label>
@@ -288,11 +377,13 @@ export default function Profile({ currentMember, profileData, setProfileData, us
           </div>
           {renderDateInput('Marriage Date', 'marriageDate', 'marriageDateIsHebrew', 'marriageDateHebrew')}
         </div>
+        </fieldset>
       </div>
 
       {/* Address */}
       <div className="profile-section">
         <h2 className="profile-section-title">Address</h2>
+        <fieldset disabled={!isEditing} style={{ border: 'none', padding: 0, margin: 0 }}>
         <div className="profile-form-grid">
           <div className="form-group full-width">
             <label>Street Address</label>
@@ -333,6 +424,7 @@ export default function Profile({ currentMember, profileData, setProfileData, us
             />
           </div>
         </div>
+        </fieldset>
       </div>
 
       {/* Parents Yahrzeit */}
@@ -341,6 +433,7 @@ export default function Profile({ currentMember, profileData, setProfileData, us
         <p className="donation-desc" style={{ marginBottom: '16px' }}>
           Record yahrzeit dates for departed parents or loved ones.
         </p>
+        <fieldset disabled={!isEditing} style={{ border: 'none', padding: 0, margin: 0 }}>
         <div className="dynamic-list">
           {form.yahrzeits.map((y, idx) => (
             <div key={idx} className="dynamic-list-item">
@@ -392,11 +485,13 @@ export default function Profile({ currentMember, profileData, setProfileData, us
         <button className="add-item-btn" onClick={addYahrzeit}>
           + Add Yahrzeit
         </button>
+        </fieldset>
       </div>
 
       {/* Children */}
       <div className="profile-section">
         <h2 className="profile-section-title">Children&apos;s Birthdays</h2>
+        <fieldset disabled={!isEditing} style={{ border: 'none', padding: 0, margin: 0 }}>
         <div className="dynamic-list">
           {form.children.map((c, idx) => (
             <div key={idx} className="dynamic-list-item">
@@ -446,14 +541,30 @@ export default function Profile({ currentMember, profileData, setProfileData, us
         <button className="add-item-btn" onClick={addChild}>
           + Add Child
         </button>
+        </fieldset>
       </div>
 
-      {/* Save */}
-      <div className="profile-save-row">
-        <button className="pay-btn" onClick={handleSave}>
-          Save Profile
-        </button>
-      </div>
+      {/* Save (mirrored at bottom for long forms) */}
+      {isEditing && (
+        <div className="profile-save-row" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+          <button
+            className="modal-btn-secondary"
+            style={{ padding: '10px 22px' }}
+            onClick={handleCancel}
+            disabled={saving}
+          >
+            Cancel
+          </button>
+          <button
+            className="pay-btn"
+            style={{ padding: '10px 22px' }}
+            onClick={handleSave}
+            disabled={saving}
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      )}
 
       <MembershipAutoPay currentMember={currentMember} />
 
