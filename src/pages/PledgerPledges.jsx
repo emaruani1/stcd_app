@@ -150,88 +150,99 @@ export default function PledgerPledges({ allMembers, pledgeTypes, occasions }) {
       )}
 
       <div className="dashboard-section">
-        <div className="pledges-table-wrap">
-          <table className="pledges-table">
-            <thead>
-              <tr>
-                <th style={{ minWidth: '240px' }}>Member</th>
-                <th>Pledge Type</th>
-                <th>Occasion</th>
-                <th style={{ minWidth: '110px' }}>Amount</th>
-                <th>Date</th>
-                <th style={{ width: '40px' }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, idx) => {
-                const err = perRowError[idx]
-                const occList = occasionsForType(r.pledgeType)
-                return (
-                  <tr key={idx} style={err ? { background: 'var(--danger-bg, #fee)' } : undefined}>
-                    <td>
-                      <MemberSearchSelect
-                        allMembers={allMembers}
-                        value={r.memberId}
-                        onChange={(v) => updateRow(idx, 'memberId', v)}
-                        placeholder="Search member..."
-                      />
-                    </td>
-                    <td>
-                      <select
-                        value={r.pledgeType}
-                        onChange={e => updateRow(idx, 'pledgeType', e.target.value)}
-                      >
-                        <option value="">— Type —</option>
-                        {pledgeTypes.map(pt => (
-                          <option key={pt.id} value={pt.id}>{pt.label}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>
-                      <select
-                        value={r.occasion}
-                        onChange={e => updateRow(idx, 'occasion', e.target.value)}
-                        disabled={!r.pledgeType}
-                      >
-                        <option value="">{r.pledgeType ? '— Occasion —' : 'Pick a type first'}</option>
-                        {occList.map(o => (
-                          <option key={o.id} value={o.label}>{o.label}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={r.amount}
-                        onChange={e => updateRow(idx, 'amount', e.target.value)}
-                        placeholder="0.00"
-                        style={{ width: '100%' }}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="date"
-                        value={r.date}
-                        onChange={e => updateRow(idx, 'date', e.target.value)}
-                      />
-                    </td>
-                    <td>
-                      <button
-                        className="remove-item-btn"
-                        onClick={() => removeRow(idx)}
-                        title="Remove row"
-                        type="button"
-                      >
-                        &times;
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {rows.map((r, idx) => {
+            const err = perRowError[idx]
+            const occList = occasionsForType(r.pledgeType)
+            return (
+              <div
+                key={idx}
+                style={{
+                  background: err ? 'var(--danger-bg, #fee)' : 'var(--bg-warm)',
+                  border: err ? '1px solid var(--danger)' : '1px solid var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '1rem',
+                  position: 'relative',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+                    Pledge #{idx + 1}
+                  </span>
+                  <button
+                    className="remove-item-btn"
+                    onClick={() => removeRow(idx)}
+                    title="Remove this pledge"
+                    type="button"
+                    style={{ position: 'static' }}
+                  >
+                    &times;
+                  </button>
+                </div>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                    gap: '0.75rem',
+                  }}
+                >
+                  <div className="form-group" style={{ marginBottom: 0, gridColumn: '1 / -1' }}>
+                    <label>Member</label>
+                    <MemberSearchSelect
+                      allMembers={allMembers}
+                      value={r.memberId}
+                      onChange={(v) => updateRow(idx, 'memberId', v)}
+                      placeholder="Search member by name, email, or alias..."
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Pledge Type</label>
+                    <select
+                      value={r.pledgeType}
+                      onChange={e => updateRow(idx, 'pledgeType', e.target.value)}
+                    >
+                      <option value="">— Select —</option>
+                      {pledgeTypes.map(pt => (
+                        <option key={pt.id} value={pt.id}>{pt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Occasion</label>
+                    <select
+                      value={r.occasion}
+                      onChange={e => updateRow(idx, 'occasion', e.target.value)}
+                      disabled={!r.pledgeType}
+                    >
+                      <option value="">{r.pledgeType ? '— Select —' : 'Pick a type first'}</option>
+                      {occList.map(o => (
+                        <option key={o.id} value={o.label}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Amount ($)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={r.amount}
+                      onChange={e => updateRow(idx, 'amount', e.target.value)}
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Date</label>
+                    <input
+                      type="date"
+                      value={r.date}
+                      onChange={e => updateRow(idx, 'date', e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+            )
+          })}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
