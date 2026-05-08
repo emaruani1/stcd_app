@@ -15,7 +15,13 @@ export const PAYMENT_PAYMENT_TYPES = new Set([
   'pledge', 'membership-payment', 'sponsorship-payment', 'purchase-payment', 'payment',
 ])
 
-export const NEUTRAL_PAYMENT_TYPES = new Set(['donation', 'deposit', 'card-deleted'])
+// 'idempotency-claim' is an internal row that exists only so that DynamoDB's
+// ConditionExpression can serialize concurrent payment attempts. It never
+// represents a real money movement, so we hide it from member-facing tables
+// (App.jsx filters these out before the ledger ever sees them — listed here
+// for completeness).
+export const NEUTRAL_PAYMENT_TYPES = new Set(['donation', 'deposit', 'card-deleted', 'idempotency-claim'])
+export const INTERNAL_PAYMENT_TYPES = new Set(['idempotency-claim'])
 
 export function balanceImpact(paymentType) {
   if (CHARGE_PAYMENT_TYPES.has(paymentType)) return 'charge'

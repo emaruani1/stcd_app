@@ -133,6 +133,9 @@ function App() {
 
       const txnsByMember = {}
       for (const t of txnsData) {
+        // Skip internal idempotency-claim rows — they're synchronization
+        // primitives, not transactions members should see.
+        if (t.paymentType === 'idempotency-claim') continue
         if (!txnsByMember[t.memberId]) txnsByMember[t.memberId] = []
         txnsByMember[t.memberId].push({
           id: t.transactionId,

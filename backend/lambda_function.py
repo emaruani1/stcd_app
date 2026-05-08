@@ -14,6 +14,7 @@ import jwt
 from jwt.algorithms import RSAAlgorithm
 from decimal import Decimal
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
 
 dynamodb = boto3.resource('dynamodb')
 cognito = boto3.client('cognito-idp')
@@ -280,21 +281,101 @@ MEMBER_SELF_EDITABLE_FIELDS = {
 }
 
 
-def _find_idempotent_txn(member_id, idempotency_key):
+def _idempotent_txn_id(key, suffix=''):
+    """Derive a deterministic transactionId from an idempotency key. Same input
+    always yields the same id; this lets us use DynamoDB's
+    ConditionExpression='attribute_not_exists(transactionId)' as an atomic
+    duplicate-write guard, defeating concurrent double-clicks at the storage
+    layer (which the previous scan-and-write approach could not)."""
+    return f"TXN#idem#{key}{suffix}"
+
+
+def _try_atomic_put_txn(item):
     """
-    Return a previously-recorded transaction with the given idempotencyKey for
-    this member, or None. Caller short-circuits and returns the prior response
-    instead of re-running the gateway charge.
+    Try to write `item` to stcd_transactions only if its transactionId doesn't
+    already exist. Returns (won, existing_item):
+      - (True,  None)            if we won the race / wrote the row
+      - (False, existing_item)   if the row already existed (other request won)
+    """
+    try:
+        transactions_table.put_item(
+            Item=item,
+            ConditionExpression='attribute_not_exists(transactionId)',
+        )
+        return True, None
+    except ClientError as e:
+        code = e.response.get('Error', {}).get('Code', '')
+        if code == 'ConditionalCheckFailedException':
+            existing = transactions_table.get_item(Key={
+                'memberId': item['memberId'],
+                'transactionId': item['transactionId'],
+            }).get('Item')
+            return False, existing
+        raise
+
+
+def _claim_charge_idempotency(member_id, idempotency_key):
+    """
+    For the /charge flow: atomically claim the idempotency key BEFORE we hit
+    Sola, so a concurrent duplicate request never makes a second payment. The
+    first request wins the claim and proceeds to charge; later requests with
+    the same key block-wait briefly for the result and then return it.
+
+    Returns (claimed, prior_record):
+      - claimed=True   -> caller should run Sola and then call
+                          _finish_charge_idempotency() with the result
+      - claimed=False  -> prior_record holds the winner's stored result; caller
+                          returns it directly
     """
     if not idempotency_key:
-        return None
+        return True, None
+    txn_id = _idempotent_txn_id(idempotency_key, suffix='-claim')
+    pending_item = {
+        'memberId': str(member_id),
+        'transactionId': txn_id,
+        'paymentType': 'idempotency-claim',
+        'idempotencyKey': idempotency_key,
+        'amount': Decimal('0'),
+        'status': 'pending',
+        'createdAt': _now_iso(),
+    }
+    won, existing = _try_atomic_put_txn(pending_item)
+    if won:
+        return True, None
+    # Existing claim — wait briefly for the original to complete.
+    for _ in range(60):  # ~6 seconds total
+        if existing and existing.get('status') in ('completed', 'failed'):
+            return False, existing
+        time.sleep(0.1)
+        existing = transactions_table.get_item(Key={
+            'memberId': str(member_id), 'transactionId': txn_id,
+        }).get('Item')
+    # Took too long — fail closed.
+    return False, existing
+
+
+def _finish_charge_idempotency(member_id, idempotency_key, result, status='completed'):
+    """Update the claim row written by _claim_charge_idempotency with the final
+    result. Stored as JSON in `result` so duplicate requests can mirror the
+    original response verbatim."""
+    if not idempotency_key:
+        return
     try:
-        for t in _all_member_transactions(member_id):
-            if t.get('idempotencyKey') == idempotency_key:
-                return t
+        transactions_table.update_item(
+            Key={
+                'memberId': str(member_id),
+                'transactionId': _idempotent_txn_id(idempotency_key, suffix='-claim'),
+            },
+            UpdateExpression='SET #s = :s, #r = :r, completedAt = :t',
+            ExpressionAttributeNames={'#s': 'status', '#r': 'result'},
+            ExpressionAttributeValues={
+                ':s': status,
+                ':r': json.dumps(result, default=_json_default),
+                ':t': _now_iso(),
+            },
+        )
     except Exception as e:
-        print(f"[idempotency] lookup failed: {e}")
-    return None
+        print(f"[idempotency] could not finalise claim: {e}")
 
 
 def _escape_cognito_filter_value(value):
@@ -368,7 +449,16 @@ def _write_charge_payment_pair(member_id, date, amount, charge_type, payment_typ
     """
     member_id_str = str(member_id)
     pair_id = _make_pair_id()
-    now_suffix = uuid.uuid4().hex[:8]
+    idempotency_key = extra.get('idempotencyKey') or ''
+    # Deterministic IDs when an idempotency key is provided so concurrent
+    # duplicate calls are rejected at the storage layer.
+    if idempotency_key:
+        charge_txn_id = _idempotent_txn_id(idempotency_key, suffix='-c')
+        payment_txn_id = _idempotent_txn_id(idempotency_key, suffix='-p')
+    else:
+        now_suffix = uuid.uuid4().hex[:8]
+        charge_txn_id = f"TXN#{date}#{now_suffix}-c"
+        payment_txn_id = f"TXN#{date}#{now_suffix}-p"
     year_month = (date or '')[:7]
     amount_dec = Decimal(str(amount))
     stamp = _actor_stamp_create()
@@ -391,14 +481,14 @@ def _write_charge_payment_pair(member_id, date, amount, charge_type, payment_typ
     }
     charge = {
         **base,
-        'transactionId': f"TXN#{date}#{now_suffix}-c",
+        'transactionId': charge_txn_id,
         'description': charge_description,
         'paymentType': charge_type,
         **stamp,
     }
     payment = {
         **base,
-        'transactionId': f"TXN#{date}#{now_suffix}-p",
+        'transactionId': payment_txn_id,
         'description': payment_description,
         'paymentType': payment_type,
         'paymentMethodId': extra.get('paymentMethodId', ''),
@@ -418,8 +508,23 @@ def _write_charge_payment_pair(member_id, date, amount, charge_type, payment_typ
     # Strip empties
     charge = {k: v for k, v in charge.items() if v not in ('', None)}
     payment = {k: v for k, v in payment.items() if v not in ('', None)}
-    transactions_table.put_item(Item=charge)
-    transactions_table.put_item(Item=payment)
+
+    if idempotency_key:
+        # Atomic claim — second writer of the same pair is rejected here.
+        won, existing_charge = _try_atomic_put_txn(charge)
+        if not won:
+            existing_payment = transactions_table.get_item(Key={
+                'memberId': member_id_str, 'transactionId': payment_txn_id,
+            }).get('Item') or {}
+            return existing_charge or charge, existing_payment or payment
+        won2, existing_payment = _try_atomic_put_txn(payment)
+        # If charge wrote but payment somehow already existed, fall through
+        # with whatever's there. Should not happen under same idempotencyKey.
+        if not won2:
+            return charge, existing_payment or payment
+    else:
+        transactions_table.put_item(Item=charge)
+        transactions_table.put_item(Item=payment)
 
     # If part of the payment was funded by stored Account Credit, debit it.
     if balance_applied > 0:
@@ -796,15 +901,12 @@ def create_transaction(body):
     if not (_is_admin() or _is_self(member_id)):
         return _forbid()
 
-    # Idempotency short-circuit (same UUID seen before -> return prior row).
     idempotency_key = body.get('idempotencyKey') or ''
-    if idempotency_key:
-        prior = _find_idempotent_txn(str(member_id), idempotency_key)
-        if prior:
-            return respond(200, {**prior, 'idempotent': True})
-
     date = body.get('date', '')
-    txn_id = f"TXN#{date}#{uuid.uuid4().hex[:8]}"
+    # Deterministic id when an idempotency key is provided so a concurrent
+    # duplicate is rejected by DynamoDB's ConditionExpression rather than
+    # racing to write a second row.
+    txn_id = _idempotent_txn_id(idempotency_key) if idempotency_key else f"TXN#{date}#{uuid.uuid4().hex[:8]}"
     payment_type = body.get('paymentType', '')
     amount = Decimal(str(body.get('amount', 0)))
     # Optional: how much of THIS payment came out of the member's stored balance/credit.
@@ -842,7 +944,14 @@ def create_transaction(body):
     # Clean empty strings
     item = {k: v for k, v in item.items() if v != '' or k in ('memberId', 'transactionId', 'date')}
 
-    transactions_table.put_item(Item=item)
+    if idempotency_key:
+        # Conditional put — second writer with the same key gets the first
+        # writer's row back instead of duplicating it.
+        won, existing = _try_atomic_put_txn(item)
+        if not won:
+            return respond(200, {**(existing or item), 'idempotent': True})
+    else:
+        transactions_table.put_item(Item=item)
 
     # If this is a pledge payment linked to a specific pledge, update the pledge
     if body.get('pledgeId') and body.get('paymentType') == 'pledge':
@@ -1399,16 +1508,7 @@ def pay_pledge(body):
     method = body.get('method', '')
     date = body.get('date', '')
 
-    # Idempotency: short-circuit if we've already recorded a payment with this key.
     idempotency_key = body.get('idempotencyKey') or ''
-    if idempotency_key:
-        prior = _find_idempotent_txn(str(member_id), idempotency_key)
-        if prior:
-            return respond(200, {
-                'message': 'Payment already recorded',
-                'idempotent': True,
-                'transaction': prior,
-            })
 
     # Get current pledge
     result = pledges_table.get_item(Key={'memberId': member_id, 'pledgeId': pledge_id})
@@ -1419,19 +1519,8 @@ def pay_pledge(body):
     new_paid = pledge.get('paidAmount', Decimal('0')) + amount
     is_fully_paid = new_paid >= pledge.get('amount', Decimal('0'))
 
-    # Update pledge
-    pledges_table.update_item(
-        Key={'memberId': member_id, 'pledgeId': pledge_id},
-        UpdateExpression='SET paidAmount = :paid, paid = :isPaid, paymentMethod = :method',
-        ExpressionAttributeValues={
-            ':paid': new_paid,
-            ':isPaid': is_fully_paid,
-            ':method': method,
-        },
-    )
-
-    # Create transaction record
-    txn_id = f"TXN#{date}#{uuid.uuid4().hex[:8]}"
+    # Build transaction record (deterministic id when idempotency key provided)
+    txn_id = _idempotent_txn_id(idempotency_key) if idempotency_key else f"TXN#{date}#{uuid.uuid4().hex[:8]}"
     desc = pledge.get('description', 'Pledge Payment')
     if amount < (pledge.get('amount', Decimal('0')) - pledge.get('paidAmount', Decimal('0'))):
         desc += ' (Partial)'
@@ -1462,9 +1551,30 @@ def pay_pledge(body):
     balance_applied = Decimal(str(body.get('balanceApplied', 0)))
     if balance_applied > 0:
         txn['balanceApplied'] = balance_applied
-    transactions_table.put_item(Item=txn)
 
-    # If this pledge payment was funded (in part) by stored balance, deduct it
+    # Atomic claim BEFORE we touch pledge.paidAmount or member balance, so a
+    # concurrent duplicate request can't bump those twice.
+    if idempotency_key:
+        won, existing = _try_atomic_put_txn(txn)
+        if not won:
+            return respond(200, {
+                'message': 'Payment already recorded',
+                'idempotent': True,
+                'transaction': existing or txn,
+            })
+    else:
+        transactions_table.put_item(Item=txn)
+
+    # Side effects only run for the winner:
+    pledges_table.update_item(
+        Key={'memberId': member_id, 'pledgeId': pledge_id},
+        UpdateExpression='SET paidAmount = :paid, paid = :isPaid, paymentMethod = :method',
+        ExpressionAttributeValues={
+            ':paid': new_paid,
+            ':isPaid': is_fully_paid,
+            ':method': method,
+        },
+    )
     if balance_applied > 0:
         _adjust_member_balance(member_id, -balance_applied)
 
@@ -2089,22 +2199,22 @@ def charge_saved_card(body):
     if not (_is_admin() or _is_self(member_id)):
         return _forbid()
 
-    # Idempotency: if the caller passes idempotencyKey and we've already
-    # processed it, return the prior transaction without re-charging Sola.
+    # Idempotency: atomically claim the key BEFORE we touch Sola so a concurrent
+    # double-click can't charge the card twice. The first request wins the
+    # claim and proceeds to charge; later duplicates wait briefly for the
+    # winner's result and return it verbatim.
     idempotency_key = body.get('idempotencyKey') or ''
     if idempotency_key:
-        prior = _find_idempotent_txn(str(member_id), idempotency_key)
-        if prior:
-            return respond(200, {
-                'success': prior.get('gatewayResult', '') == 'A',
-                'gatewayRefNum': prior.get('gatewayRefNum'),
-                'authCode': prior.get('gatewayAuthCode'),
-                'amount': float(prior.get('amount', 0)),
-                'last4': prior.get('cardLast4', ''),
-                'cardBrand': prior.get('cardBrand', ''),
-                'transactionId': prior.get('transactionId'),
-                'idempotent': True,
-            })
+        claimed, prior = _claim_charge_idempotency(str(member_id), idempotency_key)
+        if not claimed:
+            if prior and prior.get('result'):
+                try:
+                    return respond(200, {**json.loads(prior['result']), 'idempotent': True})
+                except Exception:
+                    pass
+            # Couldn't read the winner's result — refuse rather than risk a
+            # second charge.
+            return respond(409, {'error': 'Duplicate request still in flight. Please retry shortly.'})
 
     amount = body.get('amount')
     payment_method_id = body.get('paymentMethodId') or ''
@@ -2256,15 +2366,19 @@ def charge_saved_card(body):
             print(f"[charge] failed to record txn: {e}")
 
     if not ok:
-        return respond(402, {
+        decline_payload = {
             'success': False,
             'error': resp.get('xError', 'Charge declined'),
             'errorCode': resp.get('xErrorCode'),
             'gatewayRefNum': resp.get('xRefNum'),
             'gatewayResult': resp.get('xResult'),
-        })
+        }
+        # Stamp the claim row with the failure so duplicate retries see the
+        # same decline rather than re-charging.
+        _finish_charge_idempotency(str(member_id), idempotency_key, decline_payload, status='failed')
+        return respond(402, decline_payload)
 
-    return respond(200, {
+    success_payload = {
         'success': True,
         'gatewayRefNum': resp.get('xRefNum'),
         'authCode': resp.get('xAuthCode'),
@@ -2273,4 +2387,6 @@ def charge_saved_card(body):
         'cardBrand': brand_for_record,
         'transactionId': (txn_record or {}).get('transactionId'),
         'savedPaymentMethodId': saved_payment_method_id,
-    })
+    }
+    _finish_charge_idempotency(str(member_id), idempotency_key, success_payload)
+    return respond(200, success_payload)
