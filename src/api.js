@@ -59,6 +59,9 @@ export const createTransaction = (data) => request('/transactions', { method: 'P
 // Writes a fee + payment pair atomically. Use for membership/sponsorship/purchase
 // after a successful Sola charge. `kind` is 'membership' | 'sponsorship' | 'purchase' | 'charge'.
 export const createChargePaymentPair = (data) => request('/transactions/pair', { method: 'POST', body: JSON.stringify(data) })
+// Settle an outstanding fee row (sponsorship-fee / membership-fee / purchase-fee / charge)
+// by writing a matching payment row that carries settlesTxnId pointing at the fee.
+export const settleFee = (data) => request('/transactions/settle-fee', { method: 'POST', body: JSON.stringify(data) })
 export const updateTransaction = (data) => request('/transactions', { method: 'PUT', body: JSON.stringify(data) })
 export const deleteTransaction = (data) => request('/transactions', { method: 'DELETE', body: JSON.stringify(data) })
 

@@ -10,7 +10,6 @@ export default function AdminPledges({
   refreshData,
 }) {
   const [memberFilter, setMemberFilter] = useState('all')
-  const [statusFilter, setStatusFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
   const [showPayModal, setShowPayModal] = useState(false)
@@ -57,20 +56,59 @@ export default function AdminPledges({
     return pledgeTypes.filter(pt => pt.occasions.includes(newPledge.occasion))
   }, [pledgeTypes, newPledge.occasion])
 
-  // Flatten all pledges with member info
-  const allPledges = allMembers.flatMap(member =>
-    member.pledges.map(p => ({
-      ...p,
-      memberId: member.id,
-      memberName: `${member.firstName} ${member.lastName}`,
-    }))
-  )
+  // Outstanding obligations: unpaid pledges PLUS unpaid sponsorship-fee rows.
+  // A sponsorship-fee is "unpaid" when no sponsorship-payment with the same
+  // pairId exists for that member.
+  const allPledges = allMembers.flatMap(member => {
+    const pledgeRows = member.pledges
+      .filter(p => !p.paid && !p.canceled)
+      .map(p => ({
+        ...p,
+        kind: 'pledge',
+        memberId: member.id,
+        memberName: `${member.firstName} ${member.lastName}`,
+      }))
+
+    const fees = (member.paymentHistory || []).filter(t => t.paymentType === 'sponsorship-fee')
+    const sponsorshipPayments = (member.paymentHistory || []).filter(t => t.paymentType === 'sponsorship-payment')
+    const paidPairIds = new Set(sponsorshipPayments.map(t => t.pairId).filter(Boolean))
+    const settledFeeIds = new Set(sponsorshipPayments.map(t => t.settlesTxnId).filter(Boolean))
+    const sponsorshipRows = fees
+      .filter(f => {
+        // A fee is settled if either:
+        //   - its pairId appears on a sponsorship-payment (member-paid via card), OR
+        //   - some sponsorship-payment has settlesTxnId pointing at this fee (admin
+        //     marked paid through the new settle-fee endpoint)
+        if (f.pairId && paidPairIds.has(f.pairId)) return false
+        if (settledFeeIds.has(f.id)) return false
+        return true
+      })
+      .map(f => ({
+        kind: 'sponsorship',
+        id: f.id,
+        memberId: member.id,
+        memberName: `${member.firstName} ${member.lastName}`,
+        description: f.description || (f.category ? `${f.category} sponsorship` : 'Sponsorship'),
+        pledgeType: '',
+        occasion: '',
+        amount: Number(f.amount) || 0,
+        paidAmount: 0,
+        date: f.date || '',
+        paid: false,
+        canceled: false,
+        paymentMethod: '',
+        category: f.category || 'Sponsorship',
+        createdBy: f.createdBy || '',
+        createdByName: f.createdByName || '',
+        createdByRole: f.createdByRole || '',
+        createdAt: f.createdAt || '',
+      }))
+
+    return [...pledgeRows, ...sponsorshipRows]
+  })
 
   const filtered = allPledges.filter(p => {
     if (memberFilter !== 'all' && String(p.memberId) !== String(memberFilter)) return false
-    if (statusFilter === 'unpaid' && (p.paid || p.canceled)) return false
-    if (statusFilter === 'paid' && !p.paid) return false
-    if (statusFilter === 'canceled' && !p.canceled) return false
     if (search) {
       const q = search.toLowerCase()
       const member = allMembers.find(m => String(m.id) === String(p.memberId))
@@ -96,11 +134,14 @@ export default function AdminPledges({
     return <span className={`badge ${cls}`} style={{ fontSize: '0.72rem' }}>{category ? category.charAt(0).toUpperCase() + category.slice(1) : '—'}</span>
   }
 
-  const handleMarkPaid = (pledge, mId) => {
-    setSelectedPledge(pledge)
+  const handleMarkPaid = (row, mId) => {
+    setSelectedPledge(row)
     setSelectedMemberId(mId)
     setPaymentMethod(paymentMethods[0]?.label || 'Cash')
-    setPayAmount(String(pledge.amount - pledge.paidAmount))
+    const remaining = row.kind === 'sponsorship'
+      ? row.amount
+      : row.amount - row.paidAmount
+    setPayAmount(String(remaining))
     setPayDate(new Date().toISOString().split('T')[0])
     setShowPayModal(true)
   }
@@ -110,15 +151,29 @@ export default function AdminPledges({
     if (!amount || amount <= 0) return
 
     try {
-      await api.payPledge({
-        memberId: String(selectedMemberId),
-        pledgeId: selectedPledge.id,
-        amount,
-        method: paymentMethod,
-        date: payDate,
-      })
+      if (selectedPledge.kind === 'sponsorship') {
+        // Sponsorship-fee row — settle it via the new endpoint.
+        await api.settleFee({
+          memberId: String(selectedMemberId),
+          feeTransactionId: selectedPledge.id,
+          amount,
+          method: paymentMethod,
+          date: payDate,
+        })
+        showToast('Sponsorship marked as paid')
+      } else {
+        // Pledge — existing path.
+        await api.payPledge({
+          memberId: String(selectedMemberId),
+          pledgeId: selectedPledge.id,
+          amount,
+          method: paymentMethod,
+          date: payDate,
+          idempotencyKey: api.newIdempotencyKey(),
+        })
+        showToast(amount < (selectedPledge.amount - selectedPledge.paidAmount) ? 'Partial payment recorded' : 'Pledge marked as paid')
+      }
       setShowPayModal(false)
-      showToast(amount < (selectedPledge.amount - selectedPledge.paidAmount) ? 'Partial payment recorded' : 'Pledge marked as paid')
       if (refreshData) refreshData()
     } catch (err) {
       showToast('Error: ' + err.message)
@@ -271,16 +326,6 @@ export default function AdminPledges({
             placeholder="Filter by member..."
           />
         </div>
-        <select
-          className="admin-filter-select"
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-        >
-          <option value="all">All Status</option>
-          <option value="unpaid">Unpaid</option>
-          <option value="paid">Paid</option>
-          <option value="canceled">Canceled</option>
-        </select>
         <button className="pay-btn" style={{ padding: '10px 20px', fontSize: '0.85rem' }} onClick={() => setShowAddModal(true)}>
           + Add Pledge
         </button>
@@ -348,7 +393,13 @@ export default function AdminPledges({
                       )}
                     </td>
                     <td>
-                      {!p.paid && !p.canceled && (
+                      {p.kind === 'sponsorship' ? (
+                        <div className="action-btns">
+                          <button className="action-btn action-btn-pay" onClick={() => handleMarkPaid(p, p.memberId)}>
+                            Mark Paid
+                          </button>
+                        </div>
+                      ) : !p.paid && !p.canceled && (
                         <div className="action-btns">
                           <button className="action-btn action-btn-pay" onClick={() => handleMarkPaid(p, p.memberId)}>
                             Mark Paid

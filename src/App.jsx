@@ -184,6 +184,7 @@ function App() {
           gatewayAuthCode: t.gatewayAuthCode || '',
           gatewayResult: t.gatewayResult || '',
           gatewayStatus: t.gatewayStatus || '',
+          settlesTxnId: t.settlesTxnId || '',
           createdBy: t.createdBy || '',
           createdByName: resolveName(t.createdBy),
           createdByRole: t.createdByRole || '',

@@ -111,7 +111,19 @@ export default function AdminTransactions({
     return [...fromMembers, ...fromAdmin].sort((a, b) => new Date(b.date) - new Date(a.date))
   }, [allMembers, adminTransactions, products])
 
-  const filtered = allTransactions.filter(t => {
+  // Only show rows that actually went through the card processor — Approved,
+  // Declined, or Error. Manual ledger entries (cash, check, internal
+  // adjustments, idempotency claims) are excluded; they live in member
+  // statements / Pledges & Payments instead.
+  const processorRows = useMemo(
+    () => allTransactions.filter(t => {
+      const s = deriveStatus(t)
+      return s === 'approved' || s === 'declined' || s === 'error'
+    }),
+    [allTransactions],
+  )
+
+  const filtered = processorRows.filter(t => {
     if (memberFilter !== 'all' && String(t.memberId) !== String(memberFilter)) return false
     if (typeFilter !== 'all' && t.paymentType !== typeFilter) return false
     if (statusFilter !== 'all' && deriveStatus(t) !== statusFilter) return false
@@ -125,15 +137,15 @@ export default function AdminTransactions({
     return true
   })
 
-  // Counts for the status strip — based on the full transaction list (no filters)
+  // Counts for the status strip — based on the processor-only list.
   const statusCounts = useMemo(() => {
-    const c = { all: allTransactions.length, approved: 0, declined: 0, error: 0, recorded: 0 }
-    for (const t of allTransactions) {
+    const c = { all: processorRows.length, approved: 0, declined: 0, error: 0 }
+    for (const t of processorRows) {
       const s = deriveStatus(t)
       c[s] = (c[s] || 0) + 1
     }
     return c
-  }, [allTransactions])
+  }, [processorRows])
 
   const handleAddTransaction = async () => {
     if (!newTxn.memberId || !newTxn.amount) return
@@ -287,7 +299,6 @@ export default function AdminTransactions({
           <option value="approved">Approved only</option>
           <option value="declined">Declined only</option>
           <option value="error">Errors only</option>
-          <option value="recorded">Recorded (manual / cash / check)</option>
         </select>
         <button className="pay-btn" style={{ padding: '10px 20px', fontSize: '0.85rem' }} onClick={() => setShowAddModal(true)}>
           + Add Transaction
@@ -300,7 +311,6 @@ export default function AdminTransactions({
           { k: 'approved', label: 'Approved',  fg: '#166534', bg: '#dcfce7' },
           { k: 'declined', label: 'Declined',  fg: '#991b1b', bg: '#fee2e2' },
           { k: 'error',    label: 'Errors',    fg: '#92400e', bg: '#fef3c7' },
-          { k: 'recorded', label: 'Recorded',  fg: '#374151', bg: '#e5e7eb' },
         ].map(s => (
           <button
             key={s.k}

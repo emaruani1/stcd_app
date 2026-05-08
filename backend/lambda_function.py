@@ -605,6 +605,8 @@ def lambda_handler(event, context):
             return get_member_transactions(member_id, event)
         if path == '/transactions/pair' and method == 'POST':
             return create_charge_payment_pair(parse_body(event))
+        if path == '/transactions/settle-fee' and method == 'POST':
+            return settle_fee(parse_body(event))
         if path == '/billing/charge-membership-fee' and method == 'POST':
             return charge_membership_fee(parse_body(event))
         if path == '/transactions' and method == 'POST':
@@ -1046,6 +1048,63 @@ def create_charge_payment_pair(body):
         charge_desc, payment_desc, **extras,
     )
     return respond(201, {'charge': charge_txn, 'payment': payment_txn})
+
+
+def settle_fee(body):
+    """
+    Admin marks an outstanding sponsorship/membership/purchase fee as paid by
+    writing a matching payment row. The payment carries `settlesTxnId` so the
+    AdminPledges outstanding-list filter can pair them up.
+
+    Body: { memberId, feeTransactionId, amount, method, date, [paymentDescription] }
+    """
+    if not _is_admin():
+        return _forbid()
+    member_id = body.get('memberId')
+    fee_txn_id = body.get('feeTransactionId') or ''
+    if not member_id or not fee_txn_id:
+        return respond(400, {'error': 'memberId and feeTransactionId are required'})
+
+    fee = transactions_table.get_item(
+        Key={'memberId': str(member_id), 'transactionId': fee_txn_id}
+    ).get('Item')
+    if not fee:
+        return respond(404, {'error': 'Fee transaction not found'})
+
+    # Map fee type -> payment type
+    fee_to_payment = {
+        'sponsorship-fee': 'sponsorship-payment',
+        'membership-fee':  'membership-payment',
+        'purchase-fee':    'purchase-payment',
+        'charge':          'payment',
+    }
+    payment_type = fee_to_payment.get(fee.get('paymentType'), 'payment')
+
+    today = body.get('date') or time.strftime('%Y-%m-%d', time.gmtime())
+    amount = Decimal(str(body.get('amount', fee.get('amount', 0))))
+    method = body.get('method', 'Manual')
+    payment_desc = body.get('paymentDescription') or (
+        (fee.get('description') or 'Fee') + ' — payment'
+    )
+    payment_txn_id = f"TXN#{today}#{uuid.uuid4().hex[:8]}"
+
+    payment_row = {
+        'memberId': str(member_id),
+        'transactionId': payment_txn_id,
+        'date': today,
+        'txnDate': today,
+        'yearMonth': today[:7],
+        'description': payment_desc,
+        'amount': amount,
+        'method': method,
+        'paymentType': payment_type,
+        'category': fee.get('category', ''),
+        'settlesTxnId': fee_txn_id,
+        **_actor_stamp_create(),
+    }
+    payment_row = {k: v for k, v in payment_row.items() if v not in ('', None)}
+    transactions_table.put_item(Item=payment_row)
+    return respond(201, payment_row)
 
 
 def set_member_autopay(member_id, body):
