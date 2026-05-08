@@ -15,7 +15,7 @@ export const PAYMENT_PAYMENT_TYPES = new Set([
   'pledge', 'membership-payment', 'sponsorship-payment', 'purchase-payment', 'payment',
 ])
 
-export const NEUTRAL_PAYMENT_TYPES = new Set(['donation', 'deposit'])
+export const NEUTRAL_PAYMENT_TYPES = new Set(['donation', 'deposit', 'card-deleted'])
 
 export function balanceImpact(paymentType) {
   if (CHARGE_PAYMENT_TYPES.has(paymentType)) return 'charge'
@@ -27,6 +27,7 @@ export function balanceImpact(paymentType) {
 export function neutralReason(paymentType) {
   if (paymentType === 'deposit') return 'Adds to Account Credit only — does not affect Account Balance.'
   if (paymentType === 'donation') return 'Voluntary donation — does not affect Account Balance.'
+  if (paymentType === 'card-deleted') return 'Audit log — saved card removed. No money changed hands.'
   return ''
 }
 
@@ -113,6 +114,7 @@ export function paymentTypeLabel(type) {
     case 'payment': return 'Payment'
     case 'donation': return 'Donation'
     case 'deposit': return 'Account Deposit'
+    case 'card-deleted': return 'Card Removed'
     default: return type ? type.charAt(0).toUpperCase() + type.slice(1) : '—'
   }
 }

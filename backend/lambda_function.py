@@ -280,6 +280,23 @@ MEMBER_SELF_EDITABLE_FIELDS = {
 }
 
 
+def _find_idempotent_txn(member_id, idempotency_key):
+    """
+    Return a previously-recorded transaction with the given idempotencyKey for
+    this member, or None. Caller short-circuits and returns the prior response
+    instead of re-running the gateway charge.
+    """
+    if not idempotency_key:
+        return None
+    try:
+        for t in _all_member_transactions(member_id):
+            if t.get('idempotencyKey') == idempotency_key:
+                return t
+    except Exception as e:
+        print(f"[idempotency] lookup failed: {e}")
+    return None
+
+
 def _escape_cognito_filter_value(value):
     """
     Escape user input before interpolating into a Cognito ListUsers Filter.
@@ -391,6 +408,7 @@ def _write_charge_payment_pair(member_id, date, amount, charge_type, payment_typ
         'gatewayAuthCode': extra.get('gatewayAuthCode', ''),
         'gatewayResult': extra.get('gatewayResult', ''),
         'gatewayStatus': extra.get('gatewayStatus', ''),
+        'idempotencyKey': extra.get('idempotencyKey', ''),
         **stamp,
     }
     balance_applied = Decimal(str(extra.get('balanceApplied', 0)))
@@ -856,11 +874,21 @@ def create_charge_payment_pair(body):
       [productId], [pledgeId], [groupId], [invoice], [alias],
       [paymentMethodId], [cardLast4], [cardBrand],
       [gatewayRefNum], [gatewayAuthCode], [gatewayResult], [gatewayStatus],
-      [balanceApplied]
+      [balanceApplied], [idempotencyKey]
     """
     member_id = body.get('memberId')
     if not (_is_admin() or _is_self(member_id)):
         return _forbid()
+    # Idempotency: bail before writing if we've seen this key for this member.
+    idempotency_key = body.get('idempotencyKey') or ''
+    if idempotency_key:
+        prior = _find_idempotent_txn(str(member_id), idempotency_key)
+        if prior:
+            return respond(200, {
+                'message': 'Pair already recorded',
+                'idempotent': True,
+                'paymentTransactionId': prior.get('transactionId'),
+            })
     date = body.get('date') or time.strftime('%Y-%m-%d', time.gmtime())
     amount = body.get('amount')
     kind = (body.get('kind') or 'charge').lower()
@@ -891,7 +919,7 @@ def create_charge_payment_pair(body):
         'method', 'category', 'groupId', 'productId', 'pledgeId', 'invoice', 'alias',
         'paymentMethodId', 'cardLast4', 'cardBrand',
         'gatewayRefNum', 'gatewayAuthCode', 'gatewayResult', 'gatewayStatus',
-        'balanceApplied',
+        'balanceApplied', 'idempotencyKey',
     )
     extras = {k: body.get(k, '') for k in extra_keys}
 
@@ -1362,6 +1390,17 @@ def pay_pledge(body):
     method = body.get('method', '')
     date = body.get('date', '')
 
+    # Idempotency: short-circuit if we've already recorded a payment with this key.
+    idempotency_key = body.get('idempotencyKey') or ''
+    if idempotency_key:
+        prior = _find_idempotent_txn(str(member_id), idempotency_key)
+        if prior:
+            return respond(200, {
+                'message': 'Payment already recorded',
+                'idempotent': True,
+                'transaction': prior,
+            })
+
     # Get current pledge
     result = pledges_table.get_item(Key={'memberId': member_id, 'pledgeId': pledge_id})
     pledge = result.get('Item')
@@ -1401,6 +1440,8 @@ def pay_pledge(body):
         'pledgeId': pledge_id,
         **_actor_stamp_create(),
     }
+    if idempotency_key:
+        txn['idempotencyKey'] = idempotency_key
     alias = body.get('alias', '')
     if alias:
         txn['alias'] = alias
@@ -1970,6 +2011,38 @@ def delete_payment_method(body):
     if not (_is_admin() or _is_self(member_id)):
         return _forbid()
     key_value = int(member_id) if str(member_id).isdigit() else member_id
+
+    # Look up the card so we can write an audit row before erasing it.
+    pm = payment_methods_table.get_item(Key={
+        'memberId': key_value,
+        'paymentMethodId': payment_method_id,
+    }).get('Item') or {}
+
+    # Audit log: a 'card-deleted' txn with no balance impact, stamped with
+    # the actor and a snapshot of the (non-sensitive) card metadata. The
+    # xToken itself is dropped — only brand/last4/exp are preserved for
+    # forensics. PITR on stcd_payment_methods provides 35-day undo.
+    today = time.strftime('%Y-%m-%d', time.gmtime())
+    audit_txn = {
+        'memberId': str(member_id),
+        'transactionId': f"AUDIT#{today}#{uuid.uuid4().hex[:8]}",
+        'date': today,
+        'txnDate': today,
+        'yearMonth': today[:7],
+        'description': f"Saved card removed: {pm.get('cardBrand', 'Card')} •••• {pm.get('last4', '')}".strip(),
+        'amount': Decimal('0'),
+        'paymentType': 'card-deleted',
+        'cardLast4': pm.get('last4', ''),
+        'cardBrand': pm.get('cardBrand', ''),
+        'paymentMethodId': payment_method_id,
+        **_actor_stamp_create(),
+    }
+    audit_txn = {k: v for k, v in audit_txn.items() if v not in ('', None)}
+    try:
+        transactions_table.put_item(Item=audit_txn)
+    except Exception as e:
+        print(f"[card-delete] audit log failed: {e}")
+
     payment_methods_table.delete_item(Key={
         'memberId': key_value,
         'paymentMethodId': payment_method_id,
@@ -2006,6 +2079,24 @@ def charge_saved_card(body):
     member_id = body.get('memberId')
     if not (_is_admin() or _is_self(member_id)):
         return _forbid()
+
+    # Idempotency: if the caller passes idempotencyKey and we've already
+    # processed it, return the prior transaction without re-charging Sola.
+    idempotency_key = body.get('idempotencyKey') or ''
+    if idempotency_key:
+        prior = _find_idempotent_txn(str(member_id), idempotency_key)
+        if prior:
+            return respond(200, {
+                'success': prior.get('gatewayResult', '') == 'A',
+                'gatewayRefNum': prior.get('gatewayRefNum'),
+                'authCode': prior.get('gatewayAuthCode'),
+                'amount': float(prior.get('amount', 0)),
+                'last4': prior.get('cardLast4', ''),
+                'cardBrand': prior.get('cardBrand', ''),
+                'transactionId': prior.get('transactionId'),
+                'idempotent': True,
+            })
+
     amount = body.get('amount')
     payment_method_id = body.get('paymentMethodId') or ''
     sut_card = body.get('xCardNum') or ''
@@ -2146,6 +2237,7 @@ def charge_saved_card(body):
             'gatewayStatus': resp.get('xStatus', ''),
             'gatewayError': resp.get('xError', ''),
             'gatewayErrorCode': resp.get('xErrorCode', ''),
+            'idempotencyKey': idempotency_key,
             **_actor_stamp_create(),
         }
         txn_record = {k: v for k, v in txn_record.items() if v not in ('', None)}
