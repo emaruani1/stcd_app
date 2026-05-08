@@ -199,6 +199,7 @@ export default function AdminPledges({
       }
     }
 
+    const idemKey = api.newIdempotencyKey()
     try {
       if (newTxn.paymentType === 'purchase') {
         await api.createChargePaymentPair({
@@ -210,6 +211,7 @@ export default function AdminPledges({
           paymentDescription: `${description || 'Purchase'} payment`,
           method: newTxn.method,
           productId: newTxn.productId || '',
+          idempotencyKey: idemKey,
         })
       } else {
         await api.createTransaction({
@@ -219,6 +221,7 @@ export default function AdminPledges({
           amount,
           method: newTxn.method,
           paymentType: newTxn.paymentType,
+          idempotencyKey: idemKey,
         })
       }
 

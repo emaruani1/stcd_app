@@ -202,6 +202,11 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
     setPaying(true)
     setPayError('')
 
+    // One base idempotency key for this whole "Confirm & Pay" intent. The
+    // card charge uses it directly; each ledger row uses a derived suffix.
+    // A double-click sends the same keys → backend short-circuits.
+    const idemBase = api.newIdempotencyKey()
+
     // 1) Run the card charge first if any portion is on a card.
     //    `gw` carries gatewayRefNum / authCode / last4 / brand to attach to each ledger entry.
     let gw = {}
@@ -216,6 +221,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
           paymentType: payingType === 'deposit' ? 'membership' : payingType === 'pledges' ? 'pledge' : 'donation',
           description: summary,
           skipRecord: true, // we'll record per-line below with gateway metadata
+          idempotencyKey: `${idemBase}::charge`,
         })
         gw = {
           gatewayRefNum: res.gatewayRefNum,
@@ -243,6 +249,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
           amount: amt,
           method: 'Credit Card',
           paymentType: 'deposit',
+          idempotencyKey: `${idemBase}::deposit`,
           ...(selectedAlias ? { alias: selectedAlias } : {}),
           ...gw,
         })
@@ -290,6 +297,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
             method: methodLabel,
             date: now,
             balanceApplied: balancePortionFor(payAmt),
+            idempotencyKey: `${idemBase}::pledge::${p.id}`,
             ...(selectedAlias ? { alias: selectedAlias } : {}),
             ...gw,
             groupId,
@@ -309,6 +317,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
             paymentType: 'donation',
             groupId,
             balanceApplied: balancePortionFor(extraDonation),
+            idempotencyKey: `${idemBase}::extra-donation`,
             ...(selectedAlias ? { alias: selectedAlias } : {}),
             ...gw,
           })
@@ -328,6 +337,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
           method: methodLabel,
           paymentType: 'donation',
           balanceApplied: balancePortionFor(parseFloat(donationAmount)),
+          idempotencyKey: `${idemBase}::donation`,
           ...(selectedAlias ? { alias: selectedAlias } : {}),
           ...gw,
         })
@@ -800,6 +810,7 @@ function MembershipJoinSection({ currentMemberId, refreshData, setPaySuccess, se
         paymentDescription: `Membership payment — ${selectedPlan.label}`,
         method: 'Credit Card',
         category: 'Membership',
+        idempotencyKey: api.newIdempotencyKey(),
       })
       // Persist membership selection on the member so the monthly cron picks them up.
       await api.updateMember(String(currentMemberId), {

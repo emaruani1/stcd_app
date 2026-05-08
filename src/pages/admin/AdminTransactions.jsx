@@ -149,6 +149,7 @@ export default function AdminTransactions({
       }
     }
 
+    const idemKey = api.newIdempotencyKey()
     try {
       // Purchases write a fee + payment pair (instant -$X / +$X) so the ledger
       // reflects the obligation and its settlement at the moment of approval.
@@ -162,6 +163,7 @@ export default function AdminTransactions({
           paymentDescription: `${description || 'Purchase'} payment`,
           method: newTxn.method,
           productId: newTxn.productId || '',
+          idempotencyKey: idemKey,
           ...(newTxn.alias ? { alias: newTxn.alias } : {}),
         })
       } else {
@@ -174,6 +176,7 @@ export default function AdminTransactions({
           paymentType: newTxn.paymentType,
           pledgeId: newTxn.pledgeId || '',
           productId: newTxn.productId || '',
+          idempotencyKey: idemKey,
           ...(newTxn.alias ? { alias: newTxn.alias } : {}),
         })
       }

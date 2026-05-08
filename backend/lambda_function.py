@@ -795,6 +795,14 @@ def create_transaction(body):
     member_id = body['memberId']
     if not (_is_admin() or _is_self(member_id)):
         return _forbid()
+
+    # Idempotency short-circuit (same UUID seen before -> return prior row).
+    idempotency_key = body.get('idempotencyKey') or ''
+    if idempotency_key:
+        prior = _find_idempotent_txn(str(member_id), idempotency_key)
+        if prior:
+            return respond(200, {**prior, 'idempotent': True})
+
     date = body.get('date', '')
     txn_id = f"TXN#{date}#{uuid.uuid4().hex[:8]}"
     payment_type = body.get('paymentType', '')
@@ -828,6 +836,7 @@ def create_transaction(body):
         'gatewayResult': body.get('gatewayResult', ''),
         'gatewayStatus': body.get('gatewayStatus', ''),
         'balanceApplied': balance_applied if balance_applied > 0 else '',
+        'idempotencyKey': idempotency_key,
         **_actor_stamp_create(),
     }
     # Clean empty strings

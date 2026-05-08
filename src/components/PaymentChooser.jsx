@@ -105,6 +105,7 @@ const PaymentChooser = forwardRef(function PaymentChooser(
       amount: chargeAmount,
       paymentType, description, invoice,
       source, category, pledgeId, productId, alias, groupId,
+      idempotencyKey,
       skipRecord = false,
       requireCvvForSaved = false,  // future-proof
     }) {
@@ -123,6 +124,7 @@ const PaymentChooser = forwardRef(function PaymentChooser(
           paymentMethodId: selectedId,
           amount: chargeAmount,
           skipRecord,
+          ...(idempotencyKey ? { idempotencyKey } : {}),
           ...cleanMeta,
         }
       } else {
@@ -144,6 +146,7 @@ const PaymentChooser = forwardRef(function PaymentChooser(
           amount: chargeAmount,
           saveOnSuccess: saveForFuture,
           skipRecord,
+          ...(idempotencyKey ? { idempotencyKey } : {}),
           ...cleanMeta,
         }
       }

@@ -92,6 +92,7 @@ export default function SavedCards({ currentMember }) {
         paymentMethodId,
         amount: amt,
         description: chargeNote || 'STCD payment',
+        idempotencyKey: api.newIdempotencyKey(),
       })
       setInfo(`Charged $${amt.toFixed(2)} to •••• ${last4}. Auth: ${res.authCode || res.gatewayRefNum}`)
       setChargeOpen(null)

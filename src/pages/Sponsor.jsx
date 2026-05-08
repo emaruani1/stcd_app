@@ -113,6 +113,9 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
     setPaying(true)
     setPayError('')
 
+    // One base idempotency key for the whole sponsorship intent.
+    const idemBase = api.newIdempotencyKey()
+
     // 1) Charge the card portion first
     let gw = {}
     if (cardPortion > 0) {
@@ -123,6 +126,7 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
           description: `${selectedOption.label} sponsorship — ${formatDate(selectedDate.date)}`,
           category: sponsorType === 'kiddush' ? 'Kiddush' : 'Seuda Shelishit',
           skipRecord: true, // recorded below as a donation transaction with gateway fields
+          idempotencyKey: `${idemBase}::charge`,
         })
         gw = {
           gatewayRefNum: res.gatewayRefNum,
@@ -175,6 +179,7 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
         method: methodLabel,
         category: sponsorType === 'kiddush' ? 'Kiddush' : 'Seuda Shelishit',
         balanceApplied: balancePortionUsed > 0 ? balancePortionUsed : 0,
+        idempotencyKey: `${idemBase}::pair`,
         ...gw,
       })
     } catch (e) { console.error(e) }

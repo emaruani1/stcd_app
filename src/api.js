@@ -2,6 +2,24 @@ import { getCurrentSession } from './auth'
 
 const API_BASE = import.meta.env.VITE_API_URL
 
+/**
+ * Generate a UUID for payment idempotency. The backend short-circuits any
+ * /charge, /transactions/pair, or /pledges/pay call whose idempotencyKey it
+ * has already processed, returning the prior result instead of re-charging
+ * Sola. Use a fresh key per user intent (per click), not per retry.
+ */
+export function newIdempotencyKey() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  // RFC4122 v4 fallback for older browsers.
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 async function getAuthToken() {
   const session = await getCurrentSession()
   return session?.token || ''
