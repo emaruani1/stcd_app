@@ -152,24 +152,15 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
       }))
     }
 
-    // 3) Save sponsorship
-    try {
-      await api.updateSponsorship(selectedDate.date, {
-        [sponsorType]: {
-          sponsor: 'You',
-          type: selectedOption.id,
-          occasion: occasion || 'Sponsorship',
-          memberId: String(currentMemberId),
-        }
-      })
-    } catch (e) { console.error(e) }
-
-    // 4) Record the ledger as a sponsorship-fee + sponsorship-payment pair so the
-    //    Account Balance shows -$X then +$X (net 0) at the moment of approval.
+    // 3) Record the ledger as a sponsorship-fee + sponsorship-payment pair so
+    //    the Account Balance shows -$X then +$X (net 0) at the moment of
+    //    approval. Capture the pairId so a future cancellation can find both
+    //    rows in one shot.
+    let pairId = ''
     try {
       const label = selectedOption.label
       const dateLabel = formatDate(selectedDate.date)
-      await api.createChargePaymentPair({
+      const res = await api.createChargePaymentPair({
         memberId: String(currentMemberId),
         date: now,
         amount: selectedOption.price,
@@ -181,6 +172,21 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
         balanceApplied: balancePortionUsed > 0 ? balancePortionUsed : 0,
         idempotencyKey: `${idemBase}::pair`,
         ...gw,
+      })
+      pairId = res?.charge?.pairId || res?.payment?.pairId || ''
+    } catch (e) { console.error(e) }
+
+    // 4) Save sponsorship — stamping pairId on the booking lets
+    //    delete_sponsorship clean up both ledger rows in a single step later.
+    try {
+      await api.updateSponsorship(selectedDate.date, {
+        [sponsorType]: {
+          sponsor: 'You',
+          type: selectedOption.id,
+          occasion: occasion || 'Sponsorship',
+          memberId: String(currentMemberId),
+          ...(pairId ? { pairId } : {}),
+        }
       })
     } catch (e) { console.error(e) }
 

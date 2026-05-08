@@ -110,25 +110,14 @@ export default function AdminSponsorship({ allMembers, bookedSponsors, setBooked
     const options = reserveType === 'kiddush' ? kiddushOptions : seudaOptions
     const opt = options.find(o => o.id === reserveOption)
 
-    // Save sponsorship to API
-    try {
-      await api.updateSponsorship(selectedDate.date, {
-        [reserveType]: {
-          sponsor: `The ${member.lastName} Family`,
-          type: reserveOption,
-          occasion: reserveOccasion || 'Sponsorship',
-          memberId: String(member.id),
-        }
-      })
-    } catch (e) { console.error(e) }
-
     // Optionally post the sponsorship to the member's Account Balance as a
     // charge they owe. We write a sponsorship-fee row (no payment) so the
     // member sees -$X on their balance until it's paid; admin can later
     // reconcile through the payment flow.
+    let feeTxnId = ''
     if (createTxn && opt) {
       try {
-        await api.createTransaction({
+        const res = await api.createTransaction({
           memberId: String(member.id),
           date: new Date().toISOString().split('T')[0],
           description: `${opt.label} sponsorship — ${selectedDate.date} (reserved by admin)`,
@@ -138,8 +127,23 @@ export default function AdminSponsorship({ allMembers, bookedSponsors, setBooked
           category: reserveType === 'kiddush' ? 'Kiddush' : 'Seuda Shelishit',
           idempotencyKey: api.newIdempotencyKey(),
         })
+        feeTxnId = res?.transactionId || ''
       } catch (e) { console.error(e) }
     }
+
+    // Save sponsorship to API. Stamping the txnId on the booking lets a later
+    // delete_sponsorship clean up the ledger row in one step.
+    try {
+      await api.updateSponsorship(selectedDate.date, {
+        [reserveType]: {
+          sponsor: `The ${member.lastName} Family`,
+          type: reserveOption,
+          occasion: reserveOccasion || 'Sponsorship',
+          memberId: String(member.id),
+          ...(feeTxnId ? { txnId: feeTxnId } : {}),
+        }
+      })
+    } catch (e) { console.error(e) }
 
     setBookedSponsors(prev => ({
       ...prev,

@@ -1684,16 +1684,83 @@ def update_sponsorship(date_key, body):
     return respond(200, existing)
 
 
+def _delete_sponsorship_txns(existing, field_name, date_key):
+    """
+    When a sponsorship field is removed, also clean up the ledger row(s) the
+    booking created. Three paths:
+      - field has txnId         -> delete that one row (admin-reserved fee)
+      - field has pairId        -> delete both fee + payment rows (member-paid)
+      - neither (legacy rows)   -> scan for matching sponsorship-fee/donation
+                                    by member + category + date and delete
+    """
+    booking = existing.get(field_name) or {}
+    member_id = booking.get('memberId')
+    if not member_id:
+        return
+    member_id_str = str(member_id)
+    txn_id = booking.get('txnId')
+    pair_id = booking.get('pairId')
+
+    if txn_id:
+        try:
+            transactions_table.delete_item(Key={
+                'memberId': member_id_str, 'transactionId': txn_id,
+            })
+        except Exception as e:
+            print(f"[delete-sponsorship] could not delete txn {txn_id}: {e}")
+        return
+
+    if pair_id:
+        for t in _all_member_transactions(member_id_str):
+            if t.get('pairId') == pair_id:
+                try:
+                    transactions_table.delete_item(Key={
+                        'memberId': t['memberId'], 'transactionId': t['transactionId'],
+                    })
+                except Exception as e:
+                    print(f"[delete-sponsorship] could not delete pair member: {e}")
+        return
+
+    # Legacy fallback for sponsorships booked before we started stamping
+    # txnId/pairId. Match on member + category + the date appearing in the
+    # description. Doesn't touch real-money payments — only the unpaired
+    # fee/donation row.
+    category = 'Kiddush' if field_name == 'kiddush' else 'Seuda Shelishit'
+    for t in _all_member_transactions(member_id_str):
+        ptype = t.get('paymentType')
+        if ptype not in ('sponsorship-fee', 'donation'):
+            continue
+        if t.get('category') != category:
+            continue
+        if date_key not in (t.get('description') or ''):
+            continue
+        try:
+            transactions_table.delete_item(Key={
+                'memberId': t['memberId'], 'transactionId': t['transactionId'],
+            })
+            print(f"[delete-sponsorship] legacy fallback removed {t['transactionId']}")
+        except Exception as e:
+            print(f"[delete-sponsorship] legacy fallback failed: {e}")
+
+
 def delete_sponsorship(date_key, body):
     """Remove a kiddush or seuda booking, or unblock a date."""
     if not _is_admin():
         return _forbid()
     field = body.get('field')  # 'kiddush', 'seuda', or 'blocked'
+
+    existing = sponsorships_table.get_item(Key={'dateKey': date_key}).get('Item') or {}
+
     if not field:
+        # Whole-row delete: clean up txns for both kiddush and seuda first.
+        for f in ('kiddush', 'seuda'):
+            _delete_sponsorship_txns(existing, f, date_key)
         sponsorships_table.delete_item(Key={'dateKey': date_key})
         return respond(200, {'message': 'Sponsorship deleted'})
 
-    # Remove just the specified field
+    if field in ('kiddush', 'seuda'):
+        _delete_sponsorship_txns(existing, field, date_key)
+
     try:
         sponsorships_table.update_item(
             Key={'dateKey': date_key},
