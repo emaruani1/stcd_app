@@ -22,15 +22,15 @@ export default function Layout({ children, onLogout, userRole, currentMember }) 
   const adminNavItems = [
     { path: '/admin', label: 'Dashboard', icon: '📊' },
     { path: '/admin/members', label: 'Members', icon: '👥' },
-    { path: '/admin/pledges', label: 'Pledges & Payments', icon: '💰' },
     { path: '/admin/billing', label: 'Membership Billing', icon: '🔁' },
+    { path: '/admin/pledges', label: 'Pledges & Payments', icon: '💰' },
     { path: '/admin/transactions', label: 'Transactions', icon: '🧾' },
     { path: '/admin/sponsorship', label: 'Sponsorships', icon: '🕍' },
     { path: '/admin/yahrzeits', label: 'Yahrzeits', icon: '🕯️' },
     { path: '/admin/birthdays', label: "Birthdays & B'nei Mitzvah", icon: '🎂' },
     { path: '/admin/emails', label: 'Email Center', icon: '📧' },
-    { path: '/admin/settings', label: 'Settings', icon: '⚙️' },
     { path: '/admin/security', label: 'Account Security', icon: '🔒' },
+    { path: '/admin/settings', label: 'Settings', icon: '⚙️' },
   ]
 
   const pledgerNavItems = [

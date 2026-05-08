@@ -40,18 +40,15 @@ export default function AdminDashboard({ allMembers, memberBalances }) {
     }).length
   }, 0)
 
-  // Members with overdue pledges (top 5)
-  const todayStr = today.toISOString().split('T')[0]
-  const membersWithOverdue = allMembers
+  // Members with outstanding (unpaid + not canceled) pledges, top 5 by dollars owed.
+  const membersWithOutstanding = allMembers
     .map(member => {
-      const overdue = member.pledges.filter(p =>
-        !p.paid && !p.canceled && p.date < todayStr
-      )
-      const overdueTotal = overdue.reduce((s, p) => s + (p.amount - p.paidAmount), 0)
-      return { ...member, overdueCount: overdue.length, overdueTotal }
+      const outstanding = member.pledges.filter(p => !p.paid && !p.canceled)
+      const outstandingTotal = outstanding.reduce((s, p) => s + (p.amount - p.paidAmount), 0)
+      return { ...member, outstandingCount: outstanding.length, outstandingTotal }
     })
-    .filter(m => m.overdueCount > 0)
-    .sort((a, b) => b.overdueTotal - a.overdueTotal)
+    .filter(m => m.outstandingCount > 0)
+    .sort((a, b) => b.outstandingTotal - a.outstandingTotal)
     .slice(0, 5)
 
   const quickLinks = [
@@ -111,27 +108,27 @@ export default function AdminDashboard({ allMembers, memberBalances }) {
         </div>
       </div>
 
-      {/* Members with Overdue Pledges */}
-      {membersWithOverdue.length > 0 && (
+      {/* Members with Outstanding Pledges */}
+      {membersWithOutstanding.length > 0 && (
         <div className="dashboard-section">
-          <h2 className="section-title overdue-title">Members with Overdue Pledges</h2>
+          <h2 className="section-title">Members with Outstanding Pledges</h2>
           <div className="pledges-table-wrap">
             <table className="pledges-table">
               <thead>
                 <tr>
                   <th>Member</th>
                   <th>Email</th>
-                  <th>Overdue Pledges</th>
-                  <th>Overdue Amount</th>
+                  <th>Outstanding Pledges</th>
+                  <th>Outstanding Amount</th>
                 </tr>
               </thead>
               <tbody>
-                {membersWithOverdue.map(m => (
-                  <tr key={m.id} className="overdue-row">
+                {membersWithOutstanding.map(m => (
+                  <tr key={m.id}>
                     <td>{m.firstName} {m.lastName}</td>
                     <td>{m.email}</td>
-                    <td>{m.overdueCount}</td>
-                    <td className="amount-cell">${m.overdueTotal.toLocaleString()}</td>
+                    <td>{m.outstandingCount}</td>
+                    <td className="amount-cell">${m.outstandingTotal.toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
