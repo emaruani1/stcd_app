@@ -78,16 +78,44 @@ function App() {
     })
   }, [])
 
-  // Fetch all data when session is established
+  // Fetch all data when session is established. The set of endpoints we hit
+  // depends on the actor's role — admin-only routes are guarded server-side
+  // (RBAC), so a member calling /pledges (the list-all endpoint) gets a 403.
   const refreshData = useCallback(async () => {
     try {
-      const [membersData, pledgesData, txnsData, settingsData, sponsorshipsData, emailsData] = await Promise.all([
+      const role = session?.role || ''
+      const myMemberId = session?.memberId || ''
+      const isAdmin = role === 'admin'
+
+      // Endpoints everyone can call.
+      const sharedPromises = [
         api.fetchMembers(),
-        api.fetchAllPledges(),
-        api.fetchAllTransactions(),
         api.fetchSettings(),
         api.fetchSponsorships(),
-        api.fetchEmails(),
+      ]
+
+      let pledgesPromise, txnsPromise, emailsPromise
+      if (isAdmin) {
+        pledgesPromise = api.fetchAllPledges()
+        txnsPromise = api.fetchAllTransactions()
+        emailsPromise = api.fetchEmails()
+      } else if (role === 'member' && myMemberId) {
+        // Members can only see their own pledges + transactions.
+        pledgesPromise = api.fetchMemberPledges(myMemberId).catch(() => [])
+        txnsPromise = api.fetchMemberTransactions(myMemberId).catch(() => [])
+        emailsPromise = Promise.resolve([])
+      } else {
+        // Pledger (or any other role) — only needs the member directory + settings.
+        pledgesPromise = Promise.resolve([])
+        txnsPromise = Promise.resolve([])
+        emailsPromise = Promise.resolve([])
+      }
+
+      const [membersData, settingsData, sponsorshipsData, pledgesData, txnsData, emailsData] = await Promise.all([
+        ...sharedPromises,
+        pledgesPromise,
+        txnsPromise,
+        emailsPromise,
       ])
 
       // Build a lowercased email -> "First Last" lookup so audit fields can show
@@ -247,7 +275,7 @@ function App() {
     } catch (err) {
       console.error('Failed to fetch data:', err)
     }
-  }, [])
+  }, [session?.role, session?.memberId])
 
   useEffect(() => {
     if (session) refreshData()
