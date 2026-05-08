@@ -40,7 +40,8 @@ export default function AdminDashboard({ allMembers, memberBalances }) {
     }).length
   }, 0)
 
-  // Members with outstanding (unpaid + not canceled) pledges, top 5 by dollars owed.
+  // Every member with at least one outstanding (unpaid + non-canceled) pledge,
+  // sorted by dollars owed descending. No top-N cap — admin needs the full list.
   const membersWithOutstanding = allMembers
     .map(member => {
       const outstanding = member.pledges.filter(p => !p.paid && !p.canceled)
@@ -49,7 +50,6 @@ export default function AdminDashboard({ allMembers, memberBalances }) {
     })
     .filter(m => m.outstandingCount > 0)
     .sort((a, b) => b.outstandingTotal - a.outstandingTotal)
-    .slice(0, 5)
 
   const quickLinks = [
     { icon: '👥', label: 'Members', path: '/admin/members' },
