@@ -122,17 +122,21 @@ export default function AdminSponsorship({ allMembers, bookedSponsors, setBooked
       })
     } catch (e) { console.error(e) }
 
-    // Optionally create donation transaction
+    // Optionally post the sponsorship to the member's Account Balance as a
+    // charge they owe. We write a sponsorship-fee row (no payment) so the
+    // member sees -$X on their balance until it's paid; admin can later
+    // reconcile through the payment flow.
     if (createTxn && opt) {
       try {
         await api.createTransaction({
           memberId: String(member.id),
           date: new Date().toISOString().split('T')[0],
-          description: `${opt.label} - ${selectedDate.date}`,
+          description: `${opt.label} sponsorship — ${selectedDate.date} (reserved by admin)`,
           amount: opt.price,
           method: '',
-          paymentType: 'donation',
+          paymentType: 'sponsorship-fee',
           category: reserveType === 'kiddush' ? 'Kiddush' : 'Seuda Shelishit',
+          idempotencyKey: api.newIdempotencyKey(),
         })
       } catch (e) { console.error(e) }
     }
@@ -409,8 +413,11 @@ export default function AdminSponsorship({ allMembers, bookedSponsors, setBooked
               <div className="form-group">
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                   <input type="checkbox" checked={createTxn} onChange={e => setCreateTxn(e.target.checked)} />
-                  Create donation transaction for this sponsorship
+                  Charge member&apos;s Account Balance for this sponsorship
                 </label>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '4px 0 0 24px' }}>
+                  Posts a sponsorship fee to the member&apos;s ledger. They&apos;ll owe this amount until paid.
+                </p>
               </div>
               <div className="modal-actions">
                 <button className="modal-btn-secondary" onClick={() => setShowReserveModal(false)}>Cancel</button>
