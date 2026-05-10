@@ -16,6 +16,7 @@ export default function AdminSponsorship({ allMembers, bookedSponsors, setBooked
   const [reserveMember, setReserveMember] = useState('')
   const [reserveOption, setReserveOption] = useState('')
   const [reserveOccasion, setReserveOccasion] = useState('')
+  const [reserveAlias, setReserveAlias] = useState('')
   const [toast, setToast] = useState('')
 
   const showToast = (msg) => {
@@ -97,6 +98,7 @@ export default function AdminSponsorship({ allMembers, bookedSponsors, setBooked
     setReserveMember('')
     setReserveOption('')
     setReserveOccasion('')
+    setReserveAlias('')
     setCreateTxn(true)
     setShowReserveModal(true)
   }
@@ -126,6 +128,7 @@ export default function AdminSponsorship({ allMembers, bookedSponsors, setBooked
           paymentType: 'sponsorship-fee',
           category: reserveType === 'kiddush' ? 'Kiddush' : 'Seuda Shelishit',
           idempotencyKey: api.newIdempotencyKey(),
+          ...(reserveAlias ? { alias: reserveAlias } : {}),
         })
         feeTxnId = res?.transactionId || ''
       } catch (e) { console.error(e) }
@@ -392,10 +395,26 @@ export default function AdminSponsorship({ allMembers, bookedSponsors, setBooked
                 <MemberSearchSelect
                   allMembers={allMembers}
                   value={reserveMember}
-                  onChange={v => setReserveMember(v)}
+                  onChange={v => { setReserveMember(v); setReserveAlias('') }}
                   placeholder="Search by name, email, or alias..."
                 />
               </div>
+              {(() => {
+                const m = allMembers.find(x => String(x.id) === String(reserveMember))
+                const aliases = m?.aliases || []
+                if (!m || aliases.length === 0) return null
+                return (
+                  <div className="form-group">
+                    <label>Paying As</label>
+                    <select value={reserveAlias} onChange={e => setReserveAlias(e.target.value)}>
+                      <option value="">{m.firstName} {m.lastName}</option>
+                      {aliases.map((a, i) => (
+                        <option key={i} value={a}>{a}</option>
+                      ))}
+                    </select>
+                  </div>
+                )
+              })()}
               <div className="form-group">
                 <label>Type</label>
                 <select value={reserveOption} onChange={e => setReserveOption(e.target.value)}>

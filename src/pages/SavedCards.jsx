@@ -15,6 +15,7 @@ const brandLogo = (brand = '') => {
 
 export default function SavedCards({ currentMember }) {
   const memberId = currentMember?.id || currentMember?.memberId
+  const memberAliases = currentMember?.aliases || []
   const [cards, setCards] = useState([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
@@ -26,6 +27,7 @@ export default function SavedCards({ currentMember }) {
   const [chargeOpen, setChargeOpen] = useState(null) // paymentMethodId
   const [chargeAmount, setChargeAmount] = useState('')
   const [chargeNote, setChargeNote] = useState('')
+  const [chargeAlias, setChargeAlias] = useState('')
   const [charging, setCharging] = useState(false)
 
   const load = async () => {
@@ -93,11 +95,13 @@ export default function SavedCards({ currentMember }) {
         amount: amt,
         description: chargeNote || 'STCD payment',
         idempotencyKey: api.newIdempotencyKey(),
+        ...(chargeAlias ? { alias: chargeAlias } : {}),
       })
       setInfo(`Charged $${amt.toFixed(2)} to •••• ${last4}. Auth: ${res.authCode || res.gatewayRefNum}`)
       setChargeOpen(null)
       setChargeAmount('')
       setChargeNote('')
+      setChargeAlias('')
     } catch (e) {
       setError(e.message || 'Charge failed')
     } finally {
@@ -219,7 +223,22 @@ export default function SavedCards({ currentMember }) {
                       {charging ? 'Charging…' : `Charge •••• ${c.last4}`}
                     </button>
                   </div>
-                  <button onClick={() => { setChargeOpen(null); setChargeAmount(''); setChargeNote('') }} style={ghostBtn}>
+                  {memberAliases.length > 0 && (
+                    <div>
+                      <label style={{ fontSize: 12, color: '#52525b', display: 'block', marginBottom: 4 }}>Paying As</label>
+                      <select
+                        value={chargeAlias}
+                        onChange={(e) => setChargeAlias(e.target.value)}
+                        style={{ ...inputBox, width: '100%' }}
+                      >
+                        <option value="">{currentMember?.firstName} {currentMember?.lastName}</option>
+                        {memberAliases.map((a, i) => (
+                          <option key={i} value={a}>{a}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <button onClick={() => { setChargeOpen(null); setChargeAmount(''); setChargeNote(''); setChargeAlias('') }} style={ghostBtn}>
                     Cancel
                   </button>
                 </div>

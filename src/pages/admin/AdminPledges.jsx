@@ -10,6 +10,7 @@ export default function AdminPledges({
   refreshData,
 }) {
   const [memberFilter, setMemberFilter] = useState('all')
+  const [aliasFilter, setAliasFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
   const [showPayModal, setShowPayModal] = useState(false)
@@ -31,6 +32,7 @@ export default function AdminPledges({
     occasion: '',
     amount: '',
     date: new Date().toISOString().split('T')[0],
+    alias: '',
   })
 
   // Create transaction form
@@ -109,15 +111,27 @@ export default function AdminPledges({
 
   const filtered = allPledges.filter(p => {
     if (memberFilter !== 'all' && String(p.memberId) !== String(memberFilter)) return false
+    if (aliasFilter !== 'all') {
+      if (aliasFilter === '__primary__') { if (p.alias) return false }
+      else if ((p.alias || '') !== aliasFilter) return false
+    }
     if (search) {
       const q = search.toLowerCase()
       const member = allMembers.find(m => String(m.id) === String(p.memberId))
       const aliasStr = member ? (member.aliases || []).join(' ').toLowerCase() : ''
       const email = member ? (member.email || '').toLowerCase() : ''
-      if (!`${p.description} ${p.memberName}`.toLowerCase().includes(q) && !email.includes(q) && !aliasStr.includes(q)) return false
+      const rowAlias = (p.alias || '').toLowerCase()
+      if (!`${p.description} ${p.memberName}`.toLowerCase().includes(q) && !email.includes(q) && !aliasStr.includes(q) && !rowAlias.includes(q)) return false
     }
     return true
   }).sort((a, b) => new Date(b.date) - new Date(a.date))
+
+  // When admin filters to a specific member, expose their aliases as quick-filter pills.
+  const memberFilterAliases = (() => {
+    if (memberFilter === 'all') return []
+    const m = allMembers.find(x => String(x.id) === String(memberFilter))
+    return m?.aliases || []
+  })()
 
   const formatDate = (dateStr) => {
     const d = new Date(dateStr + 'T00:00:00')
@@ -230,8 +244,9 @@ export default function AdminPledges({
         amount: parseFloat(newPledge.amount),
         date: newPledge.date,
         category: 'pledge',
+        ...(newPledge.alias ? { alias: newPledge.alias } : {}),
       })
-      setNewPledge({ memberId: '', pledgeType: '', occasion: '', amount: '', date: new Date().toISOString().split('T')[0] })
+      setNewPledge({ memberId: '', pledgeType: '', occasion: '', amount: '', date: new Date().toISOString().split('T')[0], alias: '' })
       setShowAddModal(false)
       showToast('Pledge added successfully')
       if (refreshData) refreshData()
@@ -322,7 +337,7 @@ export default function AdminPledges({
           <MemberSearchSelect
             allMembers={allMembers}
             value={memberFilter === 'all' ? '' : memberFilter}
-            onChange={v => setMemberFilter(v || 'all')}
+            onChange={v => { setMemberFilter(v || 'all'); setAliasFilter('all') }}
             placeholder="Filter by member..."
           />
         </div>
@@ -333,6 +348,26 @@ export default function AdminPledges({
           + Transaction
         </button>
       </div>
+
+      {memberFilterAliases.length > 0 && (
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', margin: '0 0 12px' }}>
+          <span style={{ fontWeight: 600, fontSize: '0.82rem', color: 'var(--text-muted)' }}>Paying As:</span>
+          {[
+            { key: 'all', label: 'All' },
+            { key: '__primary__', label: 'Primary name only' },
+            ...memberFilterAliases.map(a => ({ key: a, label: a })),
+          ].map(f => (
+            <button
+              key={f.key}
+              className={`filter-tab ${aliasFilter === f.key ? 'active' : ''}`}
+              onClick={() => setAliasFilter(f.key)}
+              style={{ padding: '6px 14px', fontSize: '0.82rem' }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Pledges Table */}
       <div className="dashboard-section">
@@ -357,7 +392,14 @@ export default function AdminPledges({
               ) : (
                 filtered.map((p, idx) => (
                   <tr key={`${p.memberId}-${p.id}-${idx}`}>
-                    <td><strong>{p.memberName}</strong></td>
+                    <td>
+                      <strong>{p.memberName}</strong>
+                      {p.alias && (
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                          paying as {p.alias}
+                        </div>
+                      )}
+                    </td>
                     <td>
                       {p.description}
                       {(p.createdBy || p.modifiedBy) && (
@@ -433,10 +475,29 @@ export default function AdminPledges({
                 <MemberSearchSelect
                   allMembers={allMembers}
                   value={newPledge.memberId}
-                  onChange={v => setNewPledge(prev => ({ ...prev, memberId: v }))}
+                  onChange={v => setNewPledge(prev => ({ ...prev, memberId: v, alias: '' }))}
                   placeholder="Search by name, email, or alias..."
                 />
               </div>
+              {(() => {
+                const m = allMembers.find(x => String(x.id) === String(newPledge.memberId))
+                const aliases = m?.aliases || []
+                if (!m || aliases.length === 0) return null
+                return (
+                  <div className="form-group">
+                    <label>Paying As</label>
+                    <select
+                      value={newPledge.alias}
+                      onChange={e => setNewPledge(prev => ({ ...prev, alias: e.target.value }))}
+                    >
+                      <option value="">{m.firstName} {m.lastName}</option>
+                      {aliases.map((a, i) => (
+                        <option key={i} value={a}>{a}</option>
+                      ))}
+                    </select>
+                  </div>
+                )
+              })()}
               <div className="form-group">
                 <label>Occasion</label>
                 <select

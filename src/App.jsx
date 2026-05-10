@@ -726,6 +726,7 @@ function App() {
               blockedDatesState={blockedDatesState}
               currentBalance={currentBalance}
               setMemberBalances={setMemberBalances}
+              currentMember={currentMember}
               currentMemberId={currentMemberId}
               kiddushPricing={kiddushPricing}
               seudaPricing={seudaPricing}

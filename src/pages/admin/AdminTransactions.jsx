@@ -10,6 +10,7 @@ export default function AdminTransactions({
 }) {
   const [search, setSearch] = useState('')
   const [memberFilter, setMemberFilter] = useState('all')
+  const [aliasFilter, setAliasFilter] = useState('all')
   const [typeFilter, setTypeFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
   const [showAddModal, setShowAddModal] = useState(false)
@@ -125,6 +126,10 @@ export default function AdminTransactions({
 
   const filtered = processorRows.filter(t => {
     if (memberFilter !== 'all' && String(t.memberId) !== String(memberFilter)) return false
+    if (aliasFilter !== 'all') {
+      if (aliasFilter === '__primary__') { if (t.alias) return false }
+      else if ((t.alias || '') !== aliasFilter) return false
+    }
     if (typeFilter !== 'all' && t.paymentType !== typeFilter) return false
     if (statusFilter !== 'all' && deriveStatus(t) !== statusFilter) return false
     if (search) {
@@ -132,10 +137,18 @@ export default function AdminTransactions({
       const member = allMembers.find(m => String(m.id) === String(t.memberId))
       const aliasStr = member ? (member.aliases || []).join(' ').toLowerCase() : ''
       const email = member ? (member.email || '').toLowerCase() : ''
-      if (!`${t.description} ${t.memberName}`.toLowerCase().includes(q) && !email.includes(q) && !aliasStr.includes(q)) return false
+      const rowAlias = (t.alias || '').toLowerCase()
+      if (!`${t.description} ${t.memberName}`.toLowerCase().includes(q) && !email.includes(q) && !aliasStr.includes(q) && !rowAlias.includes(q)) return false
     }
     return true
   })
+
+  // Quick-filter pills for the selected member's aliases (cross-member alias filtering doesn't make sense).
+  const memberFilterAliases = (() => {
+    if (memberFilter === 'all') return []
+    const m = allMembers.find(x => String(x.id) === String(memberFilter))
+    return m?.aliases || []
+  })()
 
   // Counts for the status strip — based on the processor-only list.
   const statusCounts = useMemo(() => {
@@ -282,7 +295,7 @@ export default function AdminTransactions({
           <MemberSearchSelect
             allMembers={allMembers}
             value={memberFilter === 'all' ? '' : memberFilter}
-            onChange={v => setMemberFilter(v || 'all')}
+            onChange={v => { setMemberFilter(v || 'all'); setAliasFilter('all') }}
             placeholder="Filter by member..."
           />
         </div>
@@ -304,6 +317,26 @@ export default function AdminTransactions({
           + Add Transaction
         </button>
       </div>
+
+      {memberFilterAliases.length > 0 && (
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', margin: '0 0 12px' }}>
+          <span style={{ fontWeight: 600, fontSize: '0.82rem', color: 'var(--text-muted)' }}>Paying As:</span>
+          {[
+            { key: 'all', label: 'All' },
+            { key: '__primary__', label: 'Primary name only' },
+            ...memberFilterAliases.map(a => ({ key: a, label: a })),
+          ].map(f => (
+            <button
+              key={f.key}
+              className={`filter-tab ${aliasFilter === f.key ? 'active' : ''}`}
+              onClick={() => setAliasFilter(f.key)}
+              style={{ padding: '6px 14px', fontSize: '0.82rem' }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
         {[

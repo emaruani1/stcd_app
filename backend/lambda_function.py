@@ -1096,6 +1096,9 @@ def settle_fee(body):
     )
     payment_txn_id = f"TXN#{today}#{uuid.uuid4().hex[:8]}"
 
+    # Inherit alias from the fee if the caller didn't pass one — keeps the
+    # "Paying As" filter consistent across the fee + payment pair.
+    alias = body.get('alias') or fee.get('alias') or ''
     payment_row = {
         'memberId': str(member_id),
         'transactionId': payment_txn_id,
@@ -1108,6 +1111,7 @@ def settle_fee(body):
         'paymentType': payment_type,
         'category': fee.get('category', ''),
         'settlesTxnId': fee_txn_id,
+        'alias': alias,
         **_actor_stamp_create(),
     }
     payment_row = {k: v for k, v in payment_row.items() if v not in ('', None)}
@@ -1492,6 +1496,7 @@ def create_pledge(body):
     pledge_id = f"PLG#{date}#{uuid.uuid4().hex[:8]}"
 
     actor_stamp = _actor_stamp_create()
+    alias = body.get('alias', '')
     item = {
         'memberId': member_id,
         'pledgeId': pledge_id,
@@ -1507,11 +1512,14 @@ def create_pledge(body):
         'category': body.get('category', 'pledge'),
         **actor_stamp,
     }
+    if alias:
+        item['alias'] = alias
 
     pledges_table.put_item(Item=item)
 
     # Mirror the pledge as a charge transaction so the ledger and
-    # Account Balance see -$amount immediately.
+    # Account Balance see -$amount immediately. Carries the same alias so the
+    # ledger filter for "Paying As <alias>" includes the charge row.
     desc = item['description'] or item['pledgeType'] or 'Pledge'
     charge_txn = {
         'memberId': str(member_id),
@@ -1524,6 +1532,7 @@ def create_pledge(body):
         'paymentType': 'pledge-charge',
         'pledgeId': pledge_id,
         'category': item['category'],
+        'alias': alias,
         **actor_stamp,
     }
     charge_txn = {k: v for k, v in charge_txn.items() if v not in ('', None)}

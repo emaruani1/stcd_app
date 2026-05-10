@@ -3,7 +3,9 @@ import { sponsorshipCalendar } from '../data/fakeData'
 import * as api from '../api'
 import PaymentChooser from '../components/PaymentChooser'
 
-export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPayments, setExtraPayments, blockedDatesState = [], currentBalance, setMemberBalances, currentMemberId, kiddushPricing, seudaPricing, refreshData }) {
+export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPayments, setExtraPayments, blockedDatesState = [], currentBalance, setMemberBalances, currentMember, currentMemberId, kiddushPricing, seudaPricing, refreshData }) {
+  const memberAliases = currentMember?.aliases || []
+  const [selectedAlias, setSelectedAlias] = useState('')
   const kiddushOptions = kiddushPricing || []
   const seudaOptions = seudaPricing || []
   const [selectedDate, setSelectedDate] = useState(null)
@@ -127,6 +129,7 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
           category: sponsorType === 'kiddush' ? 'Kiddush' : 'Seuda Shelishit',
           skipRecord: true, // recorded below as a donation transaction with gateway fields
           idempotencyKey: `${idemBase}::charge`,
+          alias: selectedAlias || undefined,
         })
         gw = {
           gatewayRefNum: res.gatewayRefNum,
@@ -171,6 +174,7 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
         category: sponsorType === 'kiddush' ? 'Kiddush' : 'Seuda Shelishit',
         balanceApplied: balancePortionUsed > 0 ? balancePortionUsed : 0,
         idempotencyKey: `${idemBase}::pair`,
+        ...(selectedAlias ? { alias: selectedAlias } : {}),
         ...gw,
       })
       pairId = res?.charge?.pairId || res?.payment?.pairId || ''
@@ -447,6 +451,22 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
                 {formatDate(selectedDate.date)}
                 {occasion && <><br /><em>{occasion}</em></>}
               </p>
+
+              {memberAliases.length > 0 && (
+                <div className="form-group" style={{ marginBottom: '14px' }}>
+                  <label htmlFor="sponsor-alias">Paying As</label>
+                  <select
+                    id="sponsor-alias"
+                    value={selectedAlias}
+                    onChange={(e) => setSelectedAlias(e.target.value)}
+                  >
+                    <option value="">{currentMember.firstName} {currentMember.lastName}</option>
+                    {memberAliases.map((a, i) => (
+                      <option key={i} value={a}>{a}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {currentBalance > 0 && (
                 <div className="payment-method-selector">
