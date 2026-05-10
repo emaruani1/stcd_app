@@ -273,7 +273,7 @@ export default function AdminTransactions({
     : []
 
   return (
-    <div className="dashboard-page">
+    <div className="dashboard-page admin-transactions-page">
       <div className="page-title-row">
         <div>
           <h1 className="page-title">Transactions</h1>
@@ -365,22 +365,22 @@ export default function AdminTransactions({
       </div>
 
       <div className="dashboard-section">
-        <div className="pledges-table-wrap">
-          <table className="pledges-table">
+        <div className="pledges-table-wrap pledges-table-wrap--transactions">
+          <table className="pledges-table pledges-table--transactions">
             <thead>
               <tr>
-                <th>Member</th>
-                <th>Date</th>
-                <th>Description</th>
-                <th>Alias</th>
-                <th>Product</th>
-                <th>Type</th>
-                <th>Amount</th>
-                <th>Method</th>
-                <th>Gateway Ref</th>
-                <th>Auth</th>
-                <th>Status</th>
-                <th>Actions</th>
+                <th data-col="member">Member</th>
+                <th data-col="date">Date</th>
+                <th data-col="description">Description</th>
+                <th data-col="alias">Alias</th>
+                <th data-col="product">Product</th>
+                <th data-col="type">Type</th>
+                <th data-col="amount">Amount</th>
+                <th data-col="method">Method</th>
+                <th data-col="ref">Gateway Ref</th>
+                <th data-col="auth">Auth</th>
+                <th data-col="status">Status</th>
+                <th data-col="actions">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -397,9 +397,9 @@ export default function AdminTransactions({
                   const cardSuffix = t.cardLast4 ? ` •••• ${t.cardLast4}` : ''
                   return (
                     <tr key={`${t.source}-${t.id}-${idx}`} style={rowStyle}>
-                      <td><strong>{t.memberName}</strong></td>
-                      <td>{formatDate(t.date)}</td>
-                      <td>
+                      <td data-col="member"><strong>{t.memberName}</strong></td>
+                      <td data-col="date">{formatDate(t.date)}</td>
+                      <td data-col="description">
                         {t.description}
                         {(t.gatewayError || t.gatewayErrorCode) && (
                           <div style={{ fontSize: '0.72rem', color: '#991b1b', marginTop: 2 }}>
@@ -419,22 +419,22 @@ export default function AdminTransactions({
                           </div>
                         )}
                       </td>
-                      <td style={{ fontSize: '0.82rem' }}>{t.alias || '—'}</td>
-                      <td style={{ fontSize: '0.82rem' }}>{t.productName || t.productId || '—'}</td>
-                      <td>{paymentTypeBadge(t.paymentType)}</td>
-                      <td className="amount-cell">${(t.amount || 0).toLocaleString()}</td>
-                      <td>
+                      <td data-col="alias" style={{ fontSize: '0.82rem' }}>{t.alias || '—'}</td>
+                      <td data-col="product" style={{ fontSize: '0.82rem' }}>{t.productName || t.productId || '—'}</td>
+                      <td data-col="type">{paymentTypeBadge(t.paymentType)}</td>
+                      <td data-col="amount" className="amount-cell">${(t.amount || 0).toLocaleString()}</td>
+                      <td data-col="method">
                         {t.method}
                         {cardSuffix && <span style={{ color: '#6b7280', fontSize: '0.78rem' }}>{cardSuffix}</span>}
                       </td>
-                      <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                      <td data-col="ref" style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
                         {t.gatewayRefNum || '—'}
                       </td>
-                      <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                      <td data-col="auth" style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
                         {t.gatewayAuthCode || '—'}
                       </td>
-                      <td>{statusBadge(status)}</td>
-                      <td>
+                      <td data-col="status">{statusBadge(status)}</td>
+                      <td data-col="actions">
                         <div className="action-btns">
                           <button className="action-btn action-btn-pay" onClick={() => handleStartEdit(t)}>Edit</button>
                           <button className="action-btn action-btn-delete" onClick={() => handleDelete(t)}>Delete</button>

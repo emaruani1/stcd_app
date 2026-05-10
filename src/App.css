@@ -653,6 +653,93 @@
   width: 40px;
 }
 
+/* ============================================
+   ADMIN TRANSACTIONS — wide responsive table
+   12 columns; opt out of the 1100px reading-width
+   cap and progressively hide low-priority columns
+   so the row always fits without horizontal scroll.
+   ============================================ */
+.portal-main:has(.admin-transactions-page) {
+  max-width: 1600px;
+}
+
+.admin-transactions-page {
+  width: 100%;
+}
+
+.pledges-table-wrap--transactions {
+  overflow-x: visible;
+}
+
+.pledges-table--transactions {
+  table-layout: auto;
+}
+
+.pledges-table--transactions th,
+.pledges-table--transactions td {
+  padding: 12px 10px;
+  font-size: 0.85rem;
+  vertical-align: top;
+}
+
+.pledges-table--transactions td[data-col="description"] {
+  white-space: normal;
+  min-width: 180px;
+}
+
+.pledges-table--transactions th[data-col="amount"],
+.pledges-table--transactions td[data-col="amount"] {
+  white-space: nowrap;
+}
+
+/* Progressively drop diagnostic / low-priority columns
+   as viewport narrows, in this priority order:
+   1280: ref + auth (operator-only IDs)
+   1100: alias + product (often "—")
+   900:  method (cash/check/card visible via status)
+   768:  type badge (description usually conveys it)
+   600:  date (member + amount + status are the floor) */
+@media (max-width: 1280px) {
+  .pledges-table--transactions [data-col="ref"],
+  .pledges-table--transactions [data-col="auth"] {
+    display: none;
+  }
+}
+
+@media (max-width: 1100px) {
+  .pledges-table--transactions [data-col="alias"],
+  .pledges-table--transactions [data-col="product"] {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .pledges-table--transactions [data-col="method"] {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .pledges-table--transactions [data-col="type"] {
+    display: none;
+  }
+  .pledges-table--transactions th,
+  .pledges-table--transactions td {
+    padding: 10px 8px;
+    font-size: 0.8rem;
+  }
+  /* Last-resort safety net if a row still needs more room. */
+  .pledges-table-wrap--transactions {
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 600px) {
+  .pledges-table--transactions [data-col="date"] {
+    display: none;
+  }
+}
+
 .custom-checkbox {
   width: 22px;
   height: 22px;
