@@ -1072,6 +1072,13 @@ def settle_fee(body):
     if not fee:
         return respond(404, {'error': 'Fee transaction not found'})
 
+    # Idempotency: if a payment that settles this fee already exists, return it
+    # rather than writing a second row. Stops duplicate clicks / retries from
+    # double-booking the ledger.
+    for t in _all_member_transactions(str(member_id)):
+        if t.get('settlesTxnId') == fee_txn_id and t.get('paymentType', '').endswith('-payment'):
+            return respond(200, {**t, 'idempotent': True})
+
     # Map fee type -> payment type
     fee_to_payment = {
         'sponsorship-fee': 'sponsorship-payment',
