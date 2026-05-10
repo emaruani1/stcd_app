@@ -1293,12 +1293,21 @@ def charge_membership_fee(body):
 
 def run_monthly_membership_billing():
     """
-    Idempotent monthly tick. Creates a membership-fee charge row for each
-    member with an active plan. Admin runs the matching payments later from
-    the Membership Billing admin page.
+    Daily idempotent tick (despite the legacy name). For each member with an
+    active plan, creates a membership-fee charge row only if today's day of
+    the month matches the member's billingDayOfMonth (default 1). End-of-month
+    edge: if a member's billing day is later than the current month's last
+    day (e.g. 31 in February), they're billed on the last day of the month
+    instead, so nobody gets skipped for a whole cycle.
     """
-    today = time.strftime('%Y-%m-%d', time.gmtime())
-    year_month = today[:7]
+    today_str = time.strftime('%Y-%m-%d', time.gmtime())
+    year_month = today_str[:7]
+    today_day = int(time.strftime('%d', time.gmtime()))
+    # Days in this month (UTC).
+    import calendar as _calendar
+    yy, mm = (int(x) for x in today_str.split('-')[:2])
+    last_day_of_month = _calendar.monthrange(yy, mm)[1]
+
     pricing = _membership_pricing_from_settings()
 
     res = members_table.scan()
@@ -1307,7 +1316,12 @@ def run_monthly_membership_billing():
         res = members_table.scan(ExclusiveStartKey=res['LastEvaluatedKey'])
         members.extend(res.get('Items', []))
 
-    summary = {'fees_created': 0, 'skipped_already_billed': 0, 'skipped_no_plan': 0}
+    summary = {
+        'fees_created': 0,
+        'skipped_wrong_day': 0,
+        'skipped_already_billed': 0,
+        'skipped_no_plan': 0,
+    }
 
     for m in members:
         mtype = m.get('membershipType', '')
@@ -1316,8 +1330,22 @@ def run_monthly_membership_billing():
             summary['skipped_no_plan'] += 1
             continue
 
-        # Per-member override beats the plan price. Convention: 0 or blank
-        # override means "use the plan price"; >0 means custom monthly rate.
+        # Default billing day = 1. Clamp to the actual last day of the month
+        # so a member set to 31 still gets billed in February.
+        try:
+            billing_day = int(m.get('billingDayOfMonth') or 1)
+        except (TypeError, ValueError):
+            billing_day = 1
+        if billing_day < 1: billing_day = 1
+        if billing_day > 28 and billing_day > last_day_of_month:
+            effective_day = last_day_of_month
+        else:
+            effective_day = min(billing_day, last_day_of_month)
+        if today_day != effective_day:
+            summary['skipped_wrong_day'] += 1
+            continue
+
+        # Per-member override beats the plan price. 0 / blank => plan price.
         override_raw = m.get('membershipPriceOverride')
         override_val = None
         if override_raw is not None and str(override_raw) != '':
@@ -1346,9 +1374,9 @@ def run_monthly_membership_billing():
         description = f"Monthly membership — {plan_label}" + (' (custom rate)' if is_override else '')
         charge_txn = {
             'memberId': member_id,
-            'transactionId': f"TXN#{today}#{uuid.uuid4().hex[:8]}",
-            'date': today,
-            'txnDate': today,
+            'transactionId': f"TXN#{today_str}#{uuid.uuid4().hex[:8]}",
+            'date': today_str,
+            'txnDate': today_str,
             'yearMonth': year_month,
             'description': description,
             'amount': amount,
@@ -1359,7 +1387,7 @@ def run_monthly_membership_billing():
         transactions_table.put_item(Item=charge_txn)
         summary['fees_created'] += 1
 
-    print(f"[monthly billing] {summary}")
+    print(f"[daily billing] day={today_day} {summary}")
     return {'statusCode': 200, 'body': json.dumps(summary)}
 
 

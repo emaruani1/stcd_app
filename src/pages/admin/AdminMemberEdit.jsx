@@ -74,6 +74,7 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
         membershipPriceOverride: member.membershipPriceOverride === undefined || member.membershipPriceOverride === null
           ? ''
           : String(member.membershipPriceOverride),
+        billingDayOfMonth: String(member.billingDayOfMonth || 1),
         memberSince: member.memberSince || '',
         formalSalutation: member.formalSalutation || '',
         dearWho: member.dearWho || '',
@@ -250,6 +251,14 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
           if (!Number.isNaN(num) && num >= 0) {
             changes.membershipPriceOverride = num
           }
+        }
+      }
+
+      // billingDayOfMonth: 1..31, default 1. Stored as a number.
+      if (form.billingDayOfMonth !== originalForm.billingDayOfMonth) {
+        const n = Number((form.billingDayOfMonth ?? '').toString().trim())
+        if (Number.isInteger(n) && n >= 1 && n <= 31) {
+          changes.billingDayOfMonth = n
         }
       }
 
@@ -699,6 +708,20 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
           <div className="form-group">
             <label>Member Since</label>
             <input type="date" value={form.memberSince} onChange={e => updateField('memberSince', e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label>Billing Day of Month</label>
+            <input
+              type="number"
+              min="1"
+              max="31"
+              value={form.billingDayOfMonth}
+              onChange={e => updateField('billingDayOfMonth', e.target.value)}
+              placeholder="1"
+            />
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '4px 0 0' }}>
+              Defaults to the 1st. Set 1–31 to bill this member on a different day each month. If the chosen day is past the month&apos;s last day (e.g. 31st in February), they&apos;ll be billed on the last day instead.
+            </p>
           </div>
           <div className="form-group full-width" style={{ background: 'var(--bg-warm)', padding: '12px 14px', borderRadius: 'var(--radius-sm)' }}>
             <label>Custom Monthly Rate (override)</label>

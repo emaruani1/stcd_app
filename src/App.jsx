@@ -212,6 +212,7 @@ function App() {
         membershipPlan: m.membershipPlan || '',
         membershipPriceOverride: m.membershipPriceOverride === undefined || m.membershipPriceOverride === null
           ? null : Number(m.membershipPriceOverride),
+        billingDayOfMonth: Number(m.billingDayOfMonth) || 1,
         gender: m.gender || '',
         address: m.address || '',
         addressLine2: m.addressLine2 || '',
