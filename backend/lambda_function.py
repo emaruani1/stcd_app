@@ -485,6 +485,7 @@ def _write_charge_payment_pair(member_id, date, amount, charge_type, payment_typ
         'transactionId': charge_txn_id,
         'description': charge_description,
         'paymentType': charge_type,
+        'idempotencyKey': extra.get('idempotencyKey', ''),
         **stamp,
     }
     payment = {
@@ -901,7 +902,9 @@ def get_member_transactions(member_id, event):
 
 
 def create_transaction(body):
-    member_id = body['memberId']
+    member_id = body.get('memberId')
+    if not member_id:
+        return respond(400, {'error': 'memberId is required'})
     if not (_is_admin() or _is_self(member_id)):
         return _forbid()
 
