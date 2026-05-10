@@ -502,7 +502,8 @@ def _write_charge_payment_pair(member_id, date, amount, charge_type, payment_typ
         'idempotencyKey': extra.get('idempotencyKey', ''),
         **stamp,
     }
-    balance_applied = Decimal(str(extra.get('balanceApplied', 0)))
+    ba_raw = extra.get('balanceApplied', 0)
+    balance_applied = Decimal(str(ba_raw)) if ba_raw not in ('', None) else Decimal('0')
     if balance_applied > 0:
         payment['balanceApplied'] = balance_applied
 
@@ -1000,16 +1001,9 @@ def create_charge_payment_pair(body):
     member_id = body.get('memberId')
     if not (_is_admin() or _is_self(member_id)):
         return _forbid()
-    # Idempotency: bail before writing if we've seen this key for this member.
-    idempotency_key = body.get('idempotencyKey') or ''
-    if idempotency_key:
-        prior = _find_idempotent_txn(str(member_id), idempotency_key)
-        if prior:
-            return respond(200, {
-                'message': 'Pair already recorded',
-                'idempotent': True,
-                'paymentTransactionId': prior.get('transactionId'),
-            })
+    # Idempotency is handled atomically inside _write_charge_payment_pair via
+    # ConditionExpression on the deterministic txn ids. A pre-check using the
+    # legacy scan helper would race anyway; the storage layer is the truth.
     date = body.get('date') or time.strftime('%Y-%m-%d', time.gmtime())
     amount = body.get('amount')
     kind = (body.get('kind') or 'charge').lower()
