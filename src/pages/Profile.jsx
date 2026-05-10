@@ -38,6 +38,7 @@ const formFromMember = (m) => ({
   spouseGender: m.spouseGender || '',
   yahrzeits: (m.yahrzeits || []).map(y => ({ ...y, useHebrew: false })),
   children: (m.children || []).map(c => ({ ...c, useHebrew: false })),
+  billingDayOfMonth: String(m.billingDayOfMonth || 1),
 })
 
 export default function Profile({ currentMember, userRole, refreshData }) {
@@ -132,6 +133,10 @@ export default function Profile({ currentMember, userRole, refreshData }) {
         spouseGender: form.spouseGender,
         yahrzeits: form.yahrzeits.map(({ useHebrew, ...y }) => y),
         children: form.children.map(({ useHebrew, ...c }) => c),
+      }
+      const dayNum = Number((form.billingDayOfMonth ?? '').toString().trim())
+      if (Number.isInteger(dayNum) && dayNum >= 1 && dayNum <= 31) {
+        payload.billingDayOfMonth = dayNum
       }
       await api.updateMember(String(currentMember.id || currentMember.memberId), payload)
       setSaveSuccess(true)
@@ -424,6 +429,32 @@ export default function Profile({ currentMember, userRole, refreshData }) {
             />
           </div>
         </div>
+        </fieldset>
+      </div>
+
+      {/* Monthly Billing Date */}
+      <div className="profile-section">
+        <h2 className="profile-section-title">Monthly Billing Date</h2>
+        <p className="donation-desc" style={{ marginBottom: '12px' }}>
+          Pick the day of the month you&apos;d like your membership fee posted to your account. Defaults to the 1st.
+        </p>
+        <fieldset disabled={!isEditing} style={{ border: 'none', padding: 0, margin: 0 }}>
+          <div className="profile-form-grid">
+            <div className="form-group">
+              <label htmlFor="billing-day">Day of Month (1–31)</label>
+              <input
+                id="billing-day"
+                type="number"
+                min="1"
+                max="31"
+                value={form.billingDayOfMonth}
+                onChange={(e) => updateField('billingDayOfMonth', e.target.value)}
+              />
+              <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '4px 0 0' }}>
+                If the day is past the month&apos;s last day (e.g. 31 in February), you&apos;ll be billed on the last day instead.
+              </p>
+            </div>
+          </div>
         </fieldset>
       </div>
 

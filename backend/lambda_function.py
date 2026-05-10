@@ -278,6 +278,7 @@ MEMBER_SELF_EDITABLE_FIELDS = {
     'address', 'addressLine2', 'city', 'state', 'zip',
     'spouseName', 'spouseGender', 'spouseDob', 'marriageDate',
     'yahrzeits', 'children',
+    'billingDayOfMonth',
 }
 
 
