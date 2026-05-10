@@ -1319,7 +1319,7 @@ def run_monthly_membership_billing():
 
     summary = {
         'fees_created': 0,
-        'skipped_wrong_day': 0,
+        'skipped_too_early': 0,        # day hasn't arrived yet
         'skipped_already_billed': 0,
         'skipped_no_plan': 0,
     }
@@ -1342,8 +1342,12 @@ def run_monthly_membership_billing():
             effective_day = last_day_of_month
         else:
             effective_day = min(billing_day, last_day_of_month)
-        if today_day != effective_day:
-            summary['skipped_wrong_day'] += 1
+        # Catch-up semantics: post the fee on any day at or after the member's
+        # billing day, as long as no fee has been posted yet this month. This
+        # makes day-of-month changes safe — nobody can be skipped, even if
+        # they shift their billing day mid-month.
+        if today_day < effective_day:
+            summary['skipped_too_early'] += 1
             continue
 
         # Per-member override beats the plan price. 0 / blank => plan price.
