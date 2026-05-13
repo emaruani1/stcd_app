@@ -26,6 +26,14 @@ emails_table = dynamodb.Table(os.environ.get('EMAILS_TABLE', 'stcd_emails'))
 settings_table = dynamodb.Table(os.environ.get('SETTINGS_TABLE', 'stcd_settings'))
 payment_methods_table = dynamodb.Table(os.environ.get('PAYMENT_METHODS_TABLE', 'stcd_payment_methods'))
 tenants_table = dynamodb.Table(os.environ.get('TENANTS_TABLE', 'stcd_tenants'))
+
+# Phase 1 migration shim — each table can run in one of four modes:
+#   legacy                  — old single-tenant table only (default)
+#   dual_write_read_legacy  — writes hit both old + v2, reads still old
+#   dual_write_read_v2      — writes hit both, reads come from v2 (cutover)
+#   v2_only                 — reads + writes go to v2 only (post-confidence)
+# Per-table env var so we can roll each table independently.
+settings_table_v2 = dynamodb.Table(os.environ.get('SETTINGS_TABLE_V2', 'stcd_settings_v2'))
 COGNITO_POOL_ID = os.environ.get('COGNITO_POOL_ID', 'us-east-2_Pna4Sv1p8')
 COGNITO_REGION = os.environ.get('COGNITO_REGION', 'us-east-2')
 COGNITO_CLIENT_ID = os.environ.get('COGNITO_CLIENT_ID', '7hvnos43j267cl5v1m2knojeda')
@@ -282,6 +290,34 @@ def _bust_tenant_cache(tenant_id=None):
         _tenant_cache.pop(tenant_id, None)
     else:
         _tenant_cache.clear()
+
+
+# ===== Phase 1 migration-mode helpers =====
+# Each migrating table reads its own env var (SETTINGS_TABLE_MODE, etc.) to
+# decide where to read from and where to write. Returns the mode string;
+# defaults to 'legacy' so existing deploys without the env set behave
+# identically to pre-Phase-1.
+_VALID_MODES = {'legacy', 'dual_write_read_legacy', 'dual_write_read_v2', 'v2_only'}
+
+
+def _migration_mode(table_key):
+    """table_key is the short name ('SETTINGS', 'EMAILS', etc.). Returns the
+    mode string, clamped to one of the valid values; bad values fall back
+    to 'legacy' so a typo in console doesn't break production."""
+    raw = (os.environ.get(f'{table_key}_TABLE_MODE', '') or '').strip().lower()
+    return raw if raw in _VALID_MODES else 'legacy'
+
+
+def _should_write_legacy(table_key):
+    return _migration_mode(table_key) in ('legacy', 'dual_write_read_legacy', 'dual_write_read_v2')
+
+
+def _should_write_v2(table_key):
+    return _migration_mode(table_key) in ('dual_write_read_legacy', 'dual_write_read_v2', 'v2_only')
+
+
+def _should_read_v2(table_key):
+    return _migration_mode(table_key) in ('dual_write_read_v2', 'v2_only')
 
 
 def _actor_stamp_create():
@@ -1226,15 +1262,13 @@ def set_member_autopay(member_id, body):
 def _membership_pricing_from_settings():
     """Read settings.membershipPlans first; fall back to legacy membershipPricing key."""
     try:
-        res = settings_table.get_item(Key={'settingKey': 'membershipPlans'})
-        items = res.get('Item', {}).get('items', [])
+        items = _settings_read('membershipPlans')
         if items:
             return items
     except Exception:
         pass
     try:
-        res = settings_table.get_item(Key={'settingKey': 'membershipPricing'})
-        return res.get('Item', {}).get('items', [])
+        return _settings_read('membershipPricing') or []
     except Exception:
         return []
 
@@ -1864,19 +1898,74 @@ def _apply_pledge_payment(member_id, pledge_id, amount, method):
 
 
 # ===================== SETTINGS =====================
+#
+# Settings are tenant-scoped via the Phase 1 migration shim. While in
+# `legacy` mode all reads/writes hit the original single-tenant table.
+# Once flipped to dual-write, the v2 table receives every write keyed
+# by (tenantId, settingKey) so each synagogue has its own pledge types,
+# payment methods, products, kiddush prices, membership plans, and
+# email templates. The transition rule in _get_actor() guarantees a
+# tenantId is always present.
+
+
+def _settings_get(key):
+    """Return the raw item dict for (current tenant, settingKey), or None
+    if not found. Reads from v2 or legacy depending on migration mode."""
+    tenant_id = _require_tenant()
+    if _should_read_v2('SETTINGS'):
+        res = settings_table_v2.get_item(Key={'tenantId': tenant_id, 'settingKey': key})
+    else:
+        res = settings_table.get_item(Key={'settingKey': key})
+    return res.get('Item')
+
+
+def _settings_read(key):
+    """Convenience: return the items list for a settingKey, or [] if missing."""
+    item = _settings_get(key)
+    return (item or {}).get('items', [])
+
+
+def _settings_read_all_for_tenant():
+    """Return a dict {settingKey: items} for the current tenant. Reads from
+    v2 (query) or legacy (scan) depending on mode."""
+    tenant_id = _require_tenant()
+    out = {}
+    if _should_read_v2('SETTINGS'):
+        res = settings_table_v2.query(KeyConditionExpression=Key('tenantId').eq(tenant_id))
+        for item in res.get('Items', []):
+            out[item['settingKey']] = item.get('items', [])
+    else:
+        res = settings_table.scan()
+        for item in res.get('Items', []):
+            out[item['settingKey']] = item.get('items', [])
+    return out
+
+
+def _settings_write(key, items, stamp):
+    """Write one settingKey for the current tenant. Hits whichever target(s)
+    the migration mode says — legacy, v2, or both."""
+    tenant_id = _require_tenant()
+    if _should_write_legacy('SETTINGS'):
+        settings_table.put_item(Item={
+            'settingKey': key,
+            'items': items,
+            **stamp,
+        })
+    if _should_write_v2('SETTINGS'):
+        settings_table_v2.put_item(Item={
+            'tenantId': tenant_id,
+            'settingKey': key,
+            'items': items,
+            **stamp,
+        })
+
 
 def get_all_settings():
-    result = settings_table.scan()
-    items = result['Items']
-    settings = {}
-    for item in items:
-        settings[item['settingKey']] = item.get('items', [])
-    return respond(200, settings)
+    return respond(200, _settings_read_all_for_tenant())
 
 
 def get_setting(key):
-    result = settings_table.get_item(Key={'settingKey': key})
-    item = result.get('Item')
+    item = _settings_get(key)
     if not item:
         return respond(404, {'error': f'Setting {key} not found'})
     return respond(200, item.get('items', []))
@@ -1886,11 +1975,7 @@ def update_setting(key, body):
     if not _is_admin():
         return _forbid()
     items = body.get('items', [])
-    settings_table.put_item(Item={
-        'settingKey': key,
-        'items': items,
-        **_actor_stamp_modify(),
-    })
+    _settings_write(key, items, _actor_stamp_modify())
     return respond(200, {'message': f'Setting {key} updated'})
 
 
