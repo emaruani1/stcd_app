@@ -63,15 +63,18 @@ export const createChargePaymentPair = (data) => request('/transactions/pair', {
 // by writing a matching payment row that carries settlesTxnId pointing at the fee.
 export const settleFee = (data) => request('/transactions/settle-fee', { method: 'POST', body: JSON.stringify(data) })
 export const updateTransaction = (data) => request('/transactions', { method: 'PUT', body: JSON.stringify(data) })
-export const deleteTransaction = (data) => request('/transactions', { method: 'DELETE', body: JSON.stringify(data) })
+// Soft-cancel a transaction (e.g. a sponsorship fee). Requires `cancellationReason`.
+// Deletions are not supported — the platform preserves an audit trail.
+export const cancelTransaction = (data) => request('/transactions/cancel', { method: 'POST', body: JSON.stringify(data) })
 
 // ===== PLEDGES =====
 export const fetchAllPledges = () => request('/pledges')
 export const fetchMemberPledges = (memberId) => request(`/pledges/member/${memberId}`)
 export const createPledge = (data) => request('/pledges', { method: 'POST', body: JSON.stringify(data) })
+// Update a pledge. To cancel, pass `{ canceled: true, cancellationReason }`.
+// Pledges (like transactions) cannot be deleted.
 export const updatePledge = (data) => request('/pledges', { method: 'PUT', body: JSON.stringify(data) })
 export const payPledge = (data) => request('/pledges/pay', { method: 'POST', body: JSON.stringify(data) })
-export const deletePledge = (data) => request('/pledges', { method: 'DELETE', body: JSON.stringify(data) })
 
 // ===== SETTINGS =====
 export const fetchSettings = () => request('/settings')

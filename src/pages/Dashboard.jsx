@@ -22,7 +22,9 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
 
   const totalStaticPaid = memberPledges.reduce((sum, p) => sum + p.paidAmount, 0)
   const totalSessionPledgePaid = Object.values(pledgePayments).reduce((sum, v) => sum + v, 0)
-  const totalHistoryPaid = currentMember.paymentHistory.reduce((sum, p) => sum + p.amount, 0)
+  const totalHistoryPaid = currentMember.paymentHistory
+    .filter(p => !p.canceled)
+    .reduce((sum, p) => sum + p.amount, 0)
   const totalExtraPaid = extraPayments.reduce((sum, p) => sum + p.amount, 0)
   const totalPaid = totalStaticPaid + totalSessionPledgePaid + totalHistoryPaid + totalExtraPaid
 

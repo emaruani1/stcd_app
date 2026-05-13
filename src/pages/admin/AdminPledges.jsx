@@ -1,6 +1,9 @@
 import { useState, useMemo } from 'react'
 import * as api from '../../api'
 import MemberSearchSelect from '../../components/MemberSearchSelect'
+import IFieldsCardForm from '../../components/IFieldsCardForm'
+
+const IFIELDS_KEY = import.meta.env.VITE_SOLA_IFIELDS_KEY || ''
 
 export default function AdminPledges({
   allMembers, setAllMembers,
@@ -12,13 +15,35 @@ export default function AdminPledges({
   const [memberFilter, setMemberFilter] = useState('all')
   const [aliasFilter, setAliasFilter] = useState('all')
   const [search, setSearch] = useState('')
+  const [showCanceled, setShowCanceled] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
   const [showPayModal, setShowPayModal] = useState(false)
-  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [showCancelModal, setShowCancelModal] = useState(false)
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelingNow, setCancelingNow] = useState(false)
   const [showCreateTxnModal, setShowCreateTxnModal] = useState(false)
+  const [showNotesModal, setShowNotesModal] = useState(false)
+  const [notesDraft, setNotesDraft] = useState('')
+  const [savingNotes, setSavingNotes] = useState(false)
   const [selectedPledge, setSelectedPledge] = useState(null)
   const [selectedMemberId, setSelectedMemberId] = useState(null)
   const [toast, setToast] = useState('')
+
+  // Charge-card modal — pay a pledge or a sponsorship fee using a saved card
+  // (or a new card the admin enters here on the spot). The same modal serves
+  // both cases; the branch is on `selectedPledge.kind`.
+  const [showChargeModal, setShowChargeModal] = useState(false)
+  const [chargeCards, setChargeCards] = useState([])
+  const [chargeCardsLoading, setChargeCardsLoading] = useState(false)
+  const [chargeSelectedCardId, setChargeSelectedCardId] = useState('')
+  const [chargeAmount, setChargeAmount] = useState('')
+  const [chargeDescription, setChargeDescription] = useState('')
+  const [chargeAlias, setChargeAlias] = useState('')
+  const [chargeAddNew, setChargeAddNew] = useState(false)
+  const [chargeSaveOnFile, setChargeSaveOnFile] = useState(true)
+  const [charging, setCharging] = useState(false)
+  const [chargeError, setChargeError] = useState('')
+  const [chargeReceipt, setChargeReceipt] = useState(null)
 
   // Mark Paid form
   const [paymentMethod, setPaymentMethod] = useState(paymentMethods[0]?.label || 'Cash')
@@ -33,6 +58,7 @@ export default function AdminPledges({
     amount: '',
     date: new Date().toISOString().split('T')[0],
     alias: '',
+    notes: '',
   })
 
   // Create transaction form
@@ -63,7 +89,7 @@ export default function AdminPledges({
   // pairId exists for that member.
   const allPledges = allMembers.flatMap(member => {
     const pledgeRows = member.pledges
-      .filter(p => !p.paid && !p.canceled)
+      .filter(p => !p.paid && (showCanceled || !p.canceled))
       .map(p => ({
         ...p,
         kind: 'pledge',
@@ -72,7 +98,7 @@ export default function AdminPledges({
       }))
 
     const fees = (member.paymentHistory || []).filter(t => t.paymentType === 'sponsorship-fee')
-    const sponsorshipPayments = (member.paymentHistory || []).filter(t => t.paymentType === 'sponsorship-payment')
+    const sponsorshipPayments = (member.paymentHistory || []).filter(t => t.paymentType === 'sponsorship-payment' && !t.canceled)
     const paidPairIds = new Set(sponsorshipPayments.map(t => t.pairId).filter(Boolean))
     const settledFeeIds = new Set(sponsorshipPayments.map(t => t.settlesTxnId).filter(Boolean))
     const sponsorshipRows = fees
@@ -83,6 +109,7 @@ export default function AdminPledges({
         //     marked paid through the new settle-fee endpoint)
         if (f.pairId && paidPairIds.has(f.pairId)) return false
         if (settledFeeIds.has(f.id)) return false
+        if (f.canceled && !showCanceled) return false
         return true
       })
       .map(f => ({
@@ -97,7 +124,12 @@ export default function AdminPledges({
         paidAmount: 0,
         date: f.date || '',
         paid: false,
-        canceled: false,
+        canceled: f.canceled || false,
+        cancellationReason: f.cancellationReason || '',
+        canceledBy: f.canceledBy || '',
+        canceledByName: f.canceledByName || '',
+        canceledByRole: f.canceledByRole || '',
+        canceledAt: f.canceledAt || '',
         paymentMethod: '',
         category: f.category || 'Sponsorship',
         createdBy: f.createdBy || '',
@@ -194,38 +226,42 @@ export default function AdminPledges({
     }
   }
 
-  const handleCancel = async (pledge, mId) => {
-    if (!confirm('Cancel this pledge?')) return
-    try {
-      await api.updatePledge({
-        memberId: String(mId),
-        pledgeId: pledge.id,
-        canceled: true,
-      })
-      showToast('Pledge canceled')
-      if (refreshData) refreshData()
-    } catch (err) {
-      showToast('Error: ' + err.message)
-    }
-  }
-
-  const handleDelete = (pledge, mId) => {
-    setSelectedPledge(pledge)
+  const handleOpenCancel = (row, mId) => {
+    setSelectedPledge(row)
     setSelectedMemberId(mId)
-    setShowDeleteModal(true)
+    setCancelReason('')
+    setShowCancelModal(true)
   }
 
-  const confirmDelete = async () => {
+  const handleConfirmCancel = async () => {
+    if (!selectedPledge) return
+    const reason = cancelReason.trim()
+    if (!reason) return
+    setCancelingNow(true)
     try {
-      await api.deletePledge({
-        memberId: String(selectedMemberId),
-        pledgeId: selectedPledge.id,
-      })
-      setShowDeleteModal(false)
-      showToast('Pledge deleted')
+      if (selectedPledge.kind === 'sponsorship') {
+        // Sponsorship-fee row — it's a transaction, not a pledge.
+        await api.cancelTransaction({
+          memberId: String(selectedMemberId),
+          transactionId: selectedPledge.id,
+          cancellationReason: reason,
+        })
+        showToast('Sponsorship fee canceled')
+      } else {
+        await api.updatePledge({
+          memberId: String(selectedMemberId),
+          pledgeId: selectedPledge.id,
+          canceled: true,
+          cancellationReason: reason,
+        })
+        showToast('Pledge canceled')
+      }
+      setShowCancelModal(false)
       if (refreshData) refreshData()
     } catch (err) {
       showToast('Error: ' + err.message)
+    } finally {
+      setCancelingNow(false)
     }
   }
 
@@ -235,6 +271,7 @@ export default function AdminPledges({
     const pledgeTypeObj = pledgeTypes.find(pt => pt.label === newPledge.pledgeType)
     const description = pledgeTypeObj ? pledgeTypeObj.label : 'Custom Pledge'
 
+    const trimmedNotes = (newPledge.notes || '').trim()
     try {
       await api.createPledge({
         memberId: String(newPledge.memberId),
@@ -245,13 +282,181 @@ export default function AdminPledges({
         date: newPledge.date,
         category: 'pledge',
         ...(newPledge.alias ? { alias: newPledge.alias } : {}),
+        ...(trimmedNotes ? { notes: trimmedNotes } : {}),
       })
-      setNewPledge({ memberId: '', pledgeType: '', occasion: '', amount: '', date: new Date().toISOString().split('T')[0], alias: '' })
+      setNewPledge({ memberId: '', pledgeType: '', occasion: '', amount: '', date: new Date().toISOString().split('T')[0], alias: '', notes: '' })
       setShowAddModal(false)
       showToast('Pledge added successfully')
       if (refreshData) refreshData()
     } catch (err) {
       showToast('Error: ' + err.message)
+    }
+  }
+
+  const handleOpenCharge = async (row, mId) => {
+    setSelectedPledge(row)
+    setSelectedMemberId(mId)
+    const remaining = row.kind === 'sponsorship'
+      ? row.amount
+      : row.amount - row.paidAmount
+    setChargeAmount(remaining > 0 ? String(remaining) : '')
+    setChargeDescription(row.description || (row.kind === 'sponsorship' ? 'Sponsorship' : 'Pledge'))
+    setChargeAlias(row.alias || '')
+    setChargeError('')
+    setChargeReceipt(null)
+    setChargeAddNew(false)
+    setChargeSaveOnFile(true)
+    setShowChargeModal(true)
+    setChargeCardsLoading(true)
+    setChargeCards([])
+    setChargeSelectedCardId('')
+    try {
+      const res = await api.fetchPaymentMethods(mId)
+      const list = res.paymentMethods || []
+      setChargeCards(list)
+      const def = list.find(c => c.isDefault) || list[0]
+      setChargeSelectedCardId(def ? def.paymentMethodId : '')
+      if (list.length === 0) setChargeAddNew(true)
+    } catch (e) {
+      setChargeError(e.message || 'Could not load saved cards')
+    } finally {
+      setChargeCardsLoading(false)
+    }
+  }
+
+  const closeChargeModal = () => {
+    if (charging) return
+    setShowChargeModal(false)
+    setChargeReceipt(null)
+    setChargeError('')
+  }
+
+  // Common payload builder used by both saved-card and new-card paths.
+  const buildChargeBody = (amt) => {
+    const isFee = selectedPledge.kind === 'sponsorship'
+    return {
+      memberId: String(selectedMemberId),
+      amount: amt,
+      paymentType: isFee ? 'sponsorship-payment' : 'pledge',
+      ...(isFee ? { settlesTxnId: selectedPledge.id } : { pledgeId: selectedPledge.id }),
+      description: chargeDescription || (isFee ? 'Sponsorship payment' : 'Pledge payment'),
+      ...(chargeAlias ? { alias: chargeAlias } : {}),
+      idempotencyKey: api.newIdempotencyKey(),
+    }
+  }
+
+  const handleChargeSavedCard = async () => {
+    if (!selectedPledge || !chargeSelectedCardId) return
+    const amt = parseFloat(chargeAmount)
+    if (!amt || amt <= 0) {
+      setChargeError('Enter an amount greater than 0.')
+      return
+    }
+    setCharging(true)
+    setChargeError('')
+    try {
+      const res = await api.chargeSavedCard({
+        ...buildChargeBody(amt),
+        paymentMethodId: chargeSelectedCardId,
+      })
+      const card = chargeCards.find(c => c.paymentMethodId === chargeSelectedCardId)
+      setChargeReceipt({
+        amount: amt,
+        last4: card?.last4 || res.last4 || '',
+        brand: card?.cardBrand || res.cardBrand || '',
+        authCode: res.authCode || '',
+        refNum: res.gatewayRefNum || '',
+        idempotent: !!res.idempotent,
+        chargedAt: new Date().toISOString(),
+      })
+      showToast(`Charged $${amt.toFixed(2)} to •••• ${card?.last4 || ''}`)
+      if (refreshData) refreshData()
+    } catch (e) {
+      setChargeError(e.message || 'Charge failed')
+    } finally {
+      setCharging(false)
+    }
+  }
+
+  const handleChargeNewCard = async ({ xCardNum, xCVV, xExp, xName, xZip }) => {
+    if (!selectedPledge) return
+    const amt = parseFloat(chargeAmount)
+    if (!amt || amt <= 0) {
+      setChargeError('Enter an amount greater than 0.')
+      return
+    }
+    setCharging(true)
+    setChargeError('')
+    try {
+      const res = await api.chargeSavedCard({
+        ...buildChargeBody(amt),
+        xCardNum, xCVV, xExp, xName, xZip,
+        saveOnSuccess: chargeSaveOnFile,
+      })
+      setChargeReceipt({
+        amount: amt,
+        last4: res.last4 || '',
+        brand: res.cardBrand || '',
+        authCode: res.authCode || '',
+        refNum: res.gatewayRefNum || '',
+        idempotent: !!res.idempotent,
+        chargedAt: new Date().toISOString(),
+        savedNewCard: chargeSaveOnFile,
+      })
+      showToast(`Charged $${amt.toFixed(2)}${chargeSaveOnFile ? ' · card saved' : ''}`)
+      if (refreshData) refreshData()
+    } catch (e) {
+      setChargeError(e.message || 'Charge failed')
+    } finally {
+      setCharging(false)
+    }
+  }
+
+  const handleOpenNotes = (pledge, mId) => {
+    setSelectedPledge(pledge)
+    setSelectedMemberId(mId)
+    setNotesDraft(pledge.notes || '')
+    setShowNotesModal(true)
+  }
+
+  const handleSaveNotes = async () => {
+    if (!selectedPledge) return
+    const trimmed = notesDraft.trim()
+    const willClear = trimmed === '' && (selectedPledge.notes || '') !== ''
+    setSavingNotes(true)
+    try {
+      await api.updatePledge({
+        memberId: String(selectedMemberId),
+        pledgeId: selectedPledge.id,
+        notes: trimmed,
+      })
+      setShowNotesModal(false)
+      showToast(willClear ? 'Notes cleared' : 'Notes saved')
+      if (refreshData) refreshData()
+    } catch (err) {
+      showToast('Error: ' + err.message)
+    } finally {
+      setSavingNotes(false)
+    }
+  }
+
+  const handleClearNotes = async () => {
+    if (!selectedPledge) return
+    if (!confirm('Clear notes on this pledge?')) return
+    setSavingNotes(true)
+    try {
+      await api.updatePledge({
+        memberId: String(selectedMemberId),
+        pledgeId: selectedPledge.id,
+        notes: '',
+      })
+      setShowNotesModal(false)
+      showToast('Notes cleared')
+      if (refreshData) refreshData()
+    } catch (err) {
+      showToast('Error: ' + err.message)
+    } finally {
+      setSavingNotes(false)
     }
   }
 
@@ -314,7 +519,7 @@ export default function AdminPledges({
   }
 
   return (
-    <div className="dashboard-page">
+    <div className="dashboard-page admin-pledges-page">
       <div className="page-title-row">
         <div>
           <h1 className="page-title">Pledges & Payments</h1>
@@ -347,6 +552,14 @@ export default function AdminPledges({
         <button className="modal-btn-secondary" style={{ padding: '10px 20px', fontSize: '0.85rem' }} onClick={() => setShowCreateTxnModal(true)}>
           + Transaction
         </button>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={showCanceled}
+            onChange={e => setShowCanceled(e.target.checked)}
+          />
+          Show canceled
+        </label>
       </div>
 
       {memberFilterAliases.length > 0 && (
@@ -371,19 +584,19 @@ export default function AdminPledges({
 
       {/* Pledges Table */}
       <div className="dashboard-section">
-        <div className="pledges-table-wrap">
-          <table className="pledges-table">
+        <div className="pledges-table-wrap pledges-table-wrap--pledges">
+          <table className="pledges-table pledges-table--pledges">
             <thead>
               <tr>
-                <th>Member</th>
-                <th>Description</th>
-                <th>Type</th>
-                <th>Occasion</th>
-                <th>Category</th>
-                <th>Date</th>
-                <th>Amount</th>
-                <th>Status</th>
-                <th>Actions</th>
+                <th data-col="member">Member</th>
+                <th data-col="description">Description</th>
+                <th data-col="type">Type</th>
+                <th data-col="occasion">Occasion</th>
+                <th data-col="category">Category</th>
+                <th data-col="date">Date</th>
+                <th data-col="amount">Amount</th>
+                <th data-col="status">Status</th>
+                <th data-col="actions">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -392,7 +605,7 @@ export default function AdminPledges({
               ) : (
                 filtered.map((p, idx) => (
                   <tr key={`${p.memberId}-${p.id}-${idx}`}>
-                    <td>
+                    <td data-col="member">
                       <strong>{p.memberName}</strong>
                       {p.alias && (
                         <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
@@ -400,8 +613,52 @@ export default function AdminPledges({
                         </div>
                       )}
                     </td>
-                    <td>
+                    <td data-col="description">
                       {p.description}
+                      {p.notes && (
+                        <div style={{
+                          fontSize: '0.78rem',
+                          color: 'var(--text-light)',
+                          marginTop: 4,
+                          padding: '6px 10px',
+                          background: 'rgba(198, 151, 63, 0.08)',
+                          borderLeft: '3px solid var(--accent)',
+                          borderRadius: '3px',
+                          whiteSpace: 'pre-wrap',
+                          fontStyle: 'italic',
+                        }}>
+                          <strong style={{ fontStyle: 'normal', color: 'var(--accent-dark)' }}>Note:</strong> {p.notes}
+                        </div>
+                      )}
+                      {p.canceled && (
+                        <div style={{
+                          fontSize: '0.78rem',
+                          color: '#7f1d1d',
+                          marginTop: 4,
+                          padding: '6px 10px',
+                          background: '#fef2f2',
+                          borderLeft: '3px solid #dc2626',
+                          borderRadius: '3px',
+                          whiteSpace: 'pre-wrap',
+                        }}>
+                          <strong style={{ color: '#991b1b' }}>Canceled · admin only</strong>
+                          {p.cancellationReason && (
+                            <div style={{ marginTop: 2, fontStyle: 'italic' }}>{p.cancellationReason}</div>
+                          )}
+                          {(p.canceledBy || p.canceledAt) && (
+                            <div style={{ fontSize: '0.7rem', color: '#9b3030', marginTop: 4 }}>
+                              {(() => {
+                                const by = p.canceledByName || p.canceledBy || ''
+                                const role = p.canceledByRole || ''
+                                const when = p.canceledAt
+                                  ? new Date(p.canceledAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+                                  : ''
+                                return `Canceled${when ? ' ' + when : ''}${by ? ' · ' + by : ''}${role ? ' (' + role + ')' : ''}`
+                              })()}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {(p.createdBy || p.modifiedBy) && (
                         <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
                           Logged {(() => {
@@ -415,17 +672,17 @@ export default function AdminPledges({
                         </div>
                       )}
                     </td>
-                    <td style={{ fontSize: '0.82rem' }}>{p.pledgeType || '—'}</td>
-                    <td style={{ fontSize: '0.82rem' }}>{p.occasion || '—'}</td>
-                    <td>{paymentTypeBadge(p.category)}</td>
-                    <td>{formatDate(p.date)}</td>
-                    <td className="amount-cell">
+                    <td data-col="type" style={{ fontSize: '0.82rem' }}>{p.pledgeType || '—'}</td>
+                    <td data-col="occasion" style={{ fontSize: '0.82rem' }}>{p.occasion || '—'}</td>
+                    <td data-col="category">{paymentTypeBadge(p.category)}</td>
+                    <td data-col="date">{formatDate(p.date)}</td>
+                    <td data-col="amount" className="amount-cell">
                       ${p.amount.toLocaleString()}
                       {p.paidAmount > 0 && p.paidAmount < p.amount && (
                         <span className="remaining-badge">${(p.amount - p.paidAmount).toLocaleString()} remaining</span>
                       )}
                     </td>
-                    <td>
+                    <td data-col="status">
                       {p.canceled ? (
                         <span className="badge badge-canceled">Canceled</span>
                       ) : p.paid ? (
@@ -434,24 +691,43 @@ export default function AdminPledges({
                         <span className="badge badge-pending">Pending</span>
                       )}
                     </td>
-                    <td>
+                    <td data-col="actions">
                       {p.kind === 'sponsorship' ? (
                         <div className="action-btns">
-                          <button className="action-btn action-btn-pay" onClick={() => handleMarkPaid(p, p.memberId)}>
-                            Mark Paid
-                          </button>
+                          {!p.canceled && (
+                            <>
+                              <button className="action-btn action-btn-pay" onClick={() => handleMarkPaid(p, p.memberId)}>
+                                Mark Paid
+                              </button>
+                              <button className="action-btn" onClick={() => handleOpenCharge(p, p.memberId)}>
+                                Charge Card
+                              </button>
+                              <button className="action-btn action-btn-cancel" onClick={() => handleOpenCancel(p, p.memberId)}>
+                                Cancel
+                              </button>
+                            </>
+                          )}
                         </div>
-                      ) : !p.paid && !p.canceled && (
+                      ) : (
                         <div className="action-btns">
-                          <button className="action-btn action-btn-pay" onClick={() => handleMarkPaid(p, p.memberId)}>
-                            Mark Paid
+                          {!p.paid && !p.canceled && (
+                            <>
+                              <button className="action-btn action-btn-pay" onClick={() => handleMarkPaid(p, p.memberId)}>
+                                Mark Paid
+                              </button>
+                              <button className="action-btn" onClick={() => handleOpenCharge(p, p.memberId)}>
+                                Charge Card
+                              </button>
+                            </>
+                          )}
+                          <button className="action-btn" onClick={() => handleOpenNotes(p, p.memberId)}>
+                            {p.notes ? 'Edit Notes' : 'Add Notes'}
                           </button>
-                          <button className="action-btn action-btn-cancel" onClick={() => handleCancel(p, p.memberId)}>
-                            Cancel
-                          </button>
-                          <button className="action-btn action-btn-delete" onClick={() => handleDelete(p, p.memberId)}>
-                            Delete
-                          </button>
+                          {!p.paid && !p.canceled && (
+                            <button className="action-btn action-btn-cancel" onClick={() => handleOpenCancel(p, p.memberId)}>
+                              Cancel
+                            </button>
+                          )}
                         </div>
                       )}
                     </td>
@@ -542,6 +818,17 @@ export default function AdminPledges({
                   />
                 </div>
               </div>
+              <div className="form-group">
+                <label>Notes (optional)</label>
+                <textarea
+                  value={newPledge.notes}
+                  onChange={e => setNewPledge(prev => ({ ...prev, notes: e.target.value }))}
+                  placeholder="Internal note about this pledge (e.g., in memory of, follow-up needed, payment plan details)..."
+                  rows={3}
+                  maxLength={1000}
+                  className="pledge-notes-textarea"
+                />
+              </div>
               <button
                 className="pay-btn modal-pay-btn"
                 onClick={handleAddPledge}
@@ -603,24 +890,339 @@ export default function AdminPledges({
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
-      {showDeleteModal && selectedPledge && (
-        <div className="modal-overlay" onClick={() => setShowDeleteModal(false)}>
+      {/* Cancel-with-Reason Modal */}
+      {showCancelModal && selectedPledge && (
+        <div className="modal-overlay" onClick={() => !cancelingNow && setShowCancelModal(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <button className="modal-close" onClick={() => setShowDeleteModal(false)}>&times;</button>
-            <h2 className="modal-title">Delete Pledge</h2>
+            <button className="modal-close" onClick={() => setShowCancelModal(false)} disabled={cancelingNow}>&times;</button>
+            <h2 className="modal-title">
+              Cancel {selectedPledge.kind === 'sponsorship' ? 'Sponsorship Fee' : 'Pledge'}
+            </h2>
             <div className="modal-body">
               <p className="modal-desc">
-                Are you sure you want to permanently delete this pledge?
+                The member will no longer see this item and their account balance will reflect the cancellation immediately.
+                A reason is required and is visible only to admins.
               </p>
               <div className="modal-total">
                 <span>{selectedPledge.description}</span>
                 <span>${selectedPledge.amount.toLocaleString()}</span>
               </div>
-              <div className="modal-actions">
-                <button className="modal-btn-secondary" onClick={() => setShowDeleteModal(false)}>Cancel</button>
-                <button className="modal-btn-danger" onClick={confirmDelete}>Delete</button>
+              <div className="form-group">
+                <label>Reason for cancellation (required)</label>
+                <textarea
+                  value={cancelReason}
+                  onChange={e => setCancelReason(e.target.value)}
+                  placeholder="e.g., duplicate entry, member requested withdrawal, error in amount, etc."
+                  rows={4}
+                  maxLength={1000}
+                  className="pledge-notes-textarea"
+                  autoFocus
+                />
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4, textAlign: 'right' }}>
+                  {cancelReason.length} / 1000
+                </div>
               </div>
+              <div className="modal-actions">
+                <button className="modal-btn-secondary" onClick={() => setShowCancelModal(false)} disabled={cancelingNow}>Keep</button>
+                <button
+                  className="modal-btn-danger"
+                  onClick={handleConfirmCancel}
+                  disabled={cancelingNow || !cancelReason.trim()}
+                >
+                  {cancelingNow ? 'Canceling...' : 'Confirm Cancel'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notes Modal */}
+      {showNotesModal && selectedPledge && (
+        <div className="modal-overlay" onClick={() => setShowNotesModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setShowNotesModal(false)}>&times;</button>
+            <h2 className="modal-title">{selectedPledge.notes ? 'Edit Notes' : 'Add Notes'}</h2>
+            <div className="modal-body">
+              <div className="modal-total">
+                <span>{selectedPledge.description}</span>
+                <span>${selectedPledge.amount.toLocaleString()}</span>
+              </div>
+              <div className="form-group">
+                <label>Notes</label>
+                <textarea
+                  value={notesDraft}
+                  onChange={e => setNotesDraft(e.target.value)}
+                  placeholder="Internal note about this pledge..."
+                  rows={5}
+                  maxLength={1000}
+                  className="pledge-notes-textarea"
+                  autoFocus
+                />
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4, textAlign: 'right' }}>
+                  {notesDraft.length} / 1000
+                </div>
+              </div>
+              <div className="modal-actions">
+                <button className="modal-btn-secondary" onClick={() => setShowNotesModal(false)} disabled={savingNotes}>Cancel</button>
+                {selectedPledge.notes && (
+                  <button
+                    className="modal-btn-danger"
+                    onClick={handleClearNotes}
+                    disabled={savingNotes}
+                  >
+                    Clear
+                  </button>
+                )}
+                <button
+                  className="pay-btn"
+                  style={{ padding: '10px 24px' }}
+                  onClick={handleSaveNotes}
+                  disabled={savingNotes || notesDraft.trim() === (selectedPledge.notes || '').trim()}
+                >
+                  {savingNotes ? 'Saving...' : 'Save Notes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Charge Card Modal — saved-card or one-off card, used by both unpaid
+          pledge rows and unpaid sponsorship-fee rows. */}
+      {showChargeModal && selectedPledge && (
+        <div className="modal-overlay" onClick={closeChargeModal}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 540 }}>
+            <button className="modal-close" onClick={closeChargeModal} disabled={charging}>&times;</button>
+            <h2 className="modal-title">
+              Charge Card — {selectedPledge.memberName}
+            </h2>
+            <div className="modal-body">
+              <div className="modal-total">
+                <span>{selectedPledge.description}</span>
+                <span>
+                  ${(selectedPledge.kind === 'sponsorship'
+                    ? selectedPledge.amount
+                    : selectedPledge.amount - selectedPledge.paidAmount
+                  ).toLocaleString()} {selectedPledge.kind === 'sponsorship' ? 'due' : 'remaining'}
+                </span>
+              </div>
+
+              {chargeError && (
+                <div style={{
+                  background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b',
+                  padding: '10px 14px', borderRadius: 'var(--radius-sm)', marginBottom: 14, fontSize: '0.85rem',
+                }}>
+                  {chargeError}
+                </div>
+              )}
+
+              {chargeReceipt ? (
+                <div style={{
+                  background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#065f46',
+                  padding: '14px 16px', borderRadius: 'var(--radius-sm)', marginBottom: 14, fontSize: '0.88rem',
+                }}>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                    Charged ${chargeReceipt.amount.toFixed(2)}
+                    {chargeReceipt.idempotent ? ' (idempotent retry)' : ''}
+                  </div>
+                  {chargeReceipt.brand && chargeReceipt.last4 && (
+                    <div>{chargeReceipt.brand} •••• {chargeReceipt.last4}</div>
+                  )}
+                  {chargeReceipt.authCode && (
+                    <div>Auth: <span style={{ fontFamily: 'monospace' }}>{chargeReceipt.authCode}</span></div>
+                  )}
+                  {chargeReceipt.refNum && (
+                    <div>Gateway ref: <span style={{ fontFamily: 'monospace' }}>{chargeReceipt.refNum}</span></div>
+                  )}
+                  {chargeReceipt.savedNewCard && (
+                    <div style={{ marginTop: 4, fontStyle: 'italic' }}>Card saved on file for future charges.</div>
+                  )}
+                  <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid #bbf7d0', fontSize: '0.78rem' }}>
+                    Logged {new Date(chargeReceipt.chargedAt).toLocaleString('en-US', {
+                      month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+                    })} under your admin account.
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <button className="modal-btn-secondary" onClick={closeChargeModal}>Close</button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Amount ($)</label>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={chargeAmount}
+                        onChange={e => setChargeAmount(e.target.value)}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label>Description</label>
+                      <input
+                        type="text"
+                        value={chargeDescription}
+                        onChange={e => setChargeDescription(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  {(() => {
+                    const member = allMembers.find(m => String(m.id) === String(selectedMemberId))
+                    const aliases = member?.aliases || []
+                    if (aliases.length === 0) return null
+                    return (
+                      <div className="form-group">
+                        <label>Paying As</label>
+                        <select value={chargeAlias} onChange={e => setChargeAlias(e.target.value)}>
+                          <option value="">{member.firstName} {member.lastName} (Primary)</option>
+                          {aliases.map((a, i) => (
+                            <option key={i} value={a}>{a}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )
+                  })()}
+
+                  <div style={{
+                    background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e',
+                    padding: '8px 12px', borderRadius: 'var(--radius-sm)', marginBottom: 16, fontSize: '0.78rem',
+                  }}>
+                    You're charging this card on behalf of <strong>{selectedPledge.memberName}</strong>.
+                    The transaction will be logged with your admin account and a timestamp.
+                  </div>
+
+                  <h3 style={{ fontSize: '0.95rem', margin: '0 0 8px' }}>Choose a card</h3>
+
+                  {chargeCardsLoading ? (
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Loading saved cards...</p>
+                  ) : chargeCards.length === 0 ? (
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontStyle: 'italic' }}>
+                      No saved cards for this member. Enter a new card below.
+                    </p>
+                  ) : (
+                    <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 8, marginBottom: 12 }}>
+                      {chargeCards.map(c => (
+                        <li
+                          key={c.paymentMethodId}
+                          onClick={() => { setChargeSelectedCardId(c.paymentMethodId); setChargeAddNew(false) }}
+                          style={{
+                            border: `2px solid ${chargeSelectedCardId === c.paymentMethodId && !chargeAddNew ? 'var(--accent)' : 'var(--border)'}`,
+                            borderRadius: 'var(--radius-sm)',
+                            padding: '10px 12px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            background: chargeSelectedCardId === c.paymentMethodId && !chargeAddNew ? 'rgba(198, 151, 63, 0.06)' : 'var(--bg-card)',
+                          }}
+                        >
+                          <input
+                            type="radio"
+                            checked={chargeSelectedCardId === c.paymentMethodId && !chargeAddNew}
+                            onChange={() => { setChargeSelectedCardId(c.paymentMethodId); setChargeAddNew(false) }}
+                            style={{ width: 'auto' }}
+                          />
+                          <div style={{ flex: 1, fontSize: '0.88rem' }}>
+                            <div style={{ fontWeight: 600 }}>
+                              {c.cardBrand || 'Card'} •••• {c.last4}
+                              {c.isDefault && (
+                                <span style={{
+                                  marginLeft: 8, padding: '1px 7px', borderRadius: 999,
+                                  background: 'rgba(26, 54, 93, 0.1)', color: 'var(--primary)',
+                                  fontSize: 10, fontWeight: 600,
+                                }}>Default</span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                              Exp {c.expMonth}/{c.expYear}
+                              {c.cardholderName ? ` · ${c.cardholderName}` : ''}
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {chargeCards.length > 0 && !chargeAddNew && (
+                    <button
+                      className="modal-btn-secondary"
+                      style={{ padding: '6px 12px', fontSize: '0.82rem', marginBottom: 12 }}
+                      onClick={() => setChargeAddNew(true)}
+                    >
+                      + Add a new card instead
+                    </button>
+                  )}
+
+                  {chargeAddNew && (
+                    <div style={{
+                      border: '2px solid var(--accent)',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: 12,
+                      background: 'rgba(198, 151, 63, 0.04)',
+                      marginBottom: 12,
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <strong style={{ fontSize: '0.9rem' }}>New card</strong>
+                        {chargeCards.length > 0 && (
+                          <button
+                            className="modal-btn-secondary"
+                            style={{ padding: '4px 10px', fontSize: '0.78rem' }}
+                            onClick={() => setChargeAddNew(false)}
+                            disabled={charging}
+                          >
+                            Use saved card instead
+                          </button>
+                        )}
+                      </div>
+                      <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0 0 8px' }}>
+                        Card details are tokenised inside the Cardknox iframe — they never touch this server.
+                      </p>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', cursor: 'pointer', marginBottom: 10 }}>
+                        <input
+                          type="checkbox"
+                          checked={chargeSaveOnFile}
+                          onChange={e => setChargeSaveOnFile(e.target.checked)}
+                          disabled={charging}
+                        />
+                        Save this card on file for future charges
+                      </label>
+                      <IFieldsCardForm
+                        iFieldsKey={IFIELDS_KEY}
+                        softwareName="STCD-App"
+                        softwareVersion="1.0.0"
+                        onTokens={handleChargeNewCard}
+                        onError={setChargeError}
+                        submitting={charging}
+                        submitLabel={charging
+                          ? 'Processing charge...'
+                          : `Charge $${(parseFloat(chargeAmount) || 0).toFixed(2)}`}
+                      />
+                    </div>
+                  )}
+
+                  {!chargeAddNew && (
+                    <div className="modal-actions">
+                      <button className="modal-btn-secondary" onClick={closeChargeModal} disabled={charging}>
+                        Cancel
+                      </button>
+                      <button
+                        className="pay-btn"
+                        style={{ padding: '10px 24px' }}
+                        onClick={handleChargeSavedCard}
+                        disabled={charging || !chargeSelectedCardId || !(parseFloat(chargeAmount) > 0)}
+                      >
+                        {charging
+                          ? 'Processing...'
+                          : `Charge $${(parseFloat(chargeAmount) || 0).toFixed(2)} to •••• ${chargeCards.find(c => c.paymentMethodId === chargeSelectedCardId)?.last4 || ''}`}
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>

@@ -56,7 +56,12 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
   const filtered = allMembers.filter(m => {
     const aliasStr = (m.aliases || []).join(' ').toLowerCase()
     const matchSearch = `${m.firstName} ${m.lastName} ${m.email} ${aliasStr}`.toLowerCase().includes(search.toLowerCase())
-    const matchType = typeFilter === 'all' || m.membershipType === typeFilter
+    // `members` = anyone with a membership of any tier (full OR associate),
+    // i.e. excludes non-member contacts. `all` = everyone in the directory.
+    const matchType =
+      typeFilter === 'all' ||
+      (typeFilter === 'members' && (m.membershipType === 'full' || m.membershipType === 'associate')) ||
+      m.membershipType === typeFilter
     return matchSearch && matchType
   })
 
@@ -178,8 +183,8 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
     <div className="dashboard-page">
       <div className="page-title-row">
         <div>
-          <h1 className="page-title">Members</h1>
-          <p className="page-subtitle">Manage all community members</p>
+          <h1 className="page-title">Contacts</h1>
+          <p className="page-subtitle">Manage all community contacts and members</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button className="pay-btn" style={{ padding: '10px 20px', fontSize: '0.85rem' }} onClick={() => setShowAddModal(true)}>
@@ -206,7 +211,8 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
           value={typeFilter}
           onChange={e => setTypeFilter(e.target.value)}
         >
-          <option value="all">All Types</option>
+          <option value="all">All Contacts</option>
+          <option value="members">All Members</option>
           <option value="full">Full Member</option>
           <option value="associate">Associate Member</option>
         </select>
@@ -412,7 +418,53 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
                                 <tbody>
                                   {m.pledges.slice(0, 10).map(p => (
                                     <tr key={p.id}>
-                                      <td>{p.description}</td>
+                                      <td>
+                                        {p.description}
+                                        {p.notes && (
+                                          <div style={{
+                                            fontSize: '0.74rem',
+                                            color: 'var(--text-light)',
+                                            marginTop: 4,
+                                            padding: '5px 8px',
+                                            background: 'rgba(198, 151, 63, 0.08)',
+                                            borderLeft: '3px solid var(--accent)',
+                                            borderRadius: '3px',
+                                            whiteSpace: 'pre-wrap',
+                                            fontStyle: 'italic',
+                                          }}>
+                                            <strong style={{ fontStyle: 'normal', color: 'var(--accent-dark)' }}>Note:</strong> {p.notes}
+                                          </div>
+                                        )}
+                                        {p.canceled && (
+                                          <div style={{
+                                            fontSize: '0.74rem',
+                                            color: '#7f1d1d',
+                                            marginTop: 4,
+                                            padding: '5px 8px',
+                                            background: '#fef2f2',
+                                            borderLeft: '3px solid #dc2626',
+                                            borderRadius: '3px',
+                                            whiteSpace: 'pre-wrap',
+                                          }}>
+                                            <strong style={{ color: '#991b1b' }}>Canceled · admin only</strong>
+                                            {p.cancellationReason && (
+                                              <div style={{ marginTop: 2, fontStyle: 'italic' }}>{p.cancellationReason}</div>
+                                            )}
+                                            {(p.canceledBy || p.canceledAt) && (
+                                              <div style={{ fontSize: '0.68rem', color: '#9b3030', marginTop: 4 }}>
+                                                {(() => {
+                                                  const by = p.canceledByName || p.canceledBy || ''
+                                                  const role = p.canceledByRole || ''
+                                                  const when = p.canceledAt
+                                                    ? new Date(p.canceledAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+                                                    : ''
+                                                  return `Canceled${when ? ' ' + when : ''}${by ? ' · ' + by : ''}${role ? ' (' + role + ')' : ''}`
+                                                })()}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </td>
                                       <td style={{ fontSize: '0.82rem' }}>{p.occasion || '—'}</td>
                                       <td>{categoryBadge(p.category)}</td>
                                       <td>{formatDate(p.date)}</td>
@@ -450,9 +502,53 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
                                     .sort((a, b) => new Date(b.date) - new Date(a.date))
                                     .slice(0, 10)
                                     .map((p, idx) => (
-                                    <tr key={p.id || idx}>
+                                    <tr key={p.id || idx} style={p.canceled ? { background: '#fef2f2' } : undefined}>
                                       <td>{formatDate(p.date)}</td>
-                                      <td>{p.description}</td>
+                                      <td>
+                                        {p.description}
+                                        {p.canceled && (
+                                          <div style={{
+                                            fontSize: '0.7rem',
+                                            color: '#7f1d1d',
+                                            marginTop: 3,
+                                            padding: '4px 7px',
+                                            background: '#fee2e2',
+                                            borderLeft: '3px solid #dc2626',
+                                            borderRadius: '3px',
+                                            whiteSpace: 'pre-wrap',
+                                          }}>
+                                            <strong style={{ color: '#991b1b' }}>Canceled · admin only</strong>
+                                            {p.cancellationReason && (
+                                              <div style={{ marginTop: 2, fontStyle: 'italic' }}>{p.cancellationReason}</div>
+                                            )}
+                                            {(p.canceledBy || p.canceledAt) && (
+                                              <div style={{ fontSize: '0.65rem', color: '#9b3030', marginTop: 3 }}>
+                                                {(() => {
+                                                  const by = p.canceledByName || p.canceledBy || ''
+                                                  const role = p.canceledByRole || ''
+                                                  const when = p.canceledAt
+                                                    ? new Date(p.canceledAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+                                                    : ''
+                                                  return `Canceled${when ? ' ' + when : ''}${by ? ' · ' + by : ''}${role ? ' (' + role + ')' : ''}`
+                                                })()}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                                          {(() => {
+                                            const at = p.createdAt || p.modifiedAt
+                                            const by = p.createdByName || p.modifiedByName || p.createdBy || p.modifiedBy
+                                            const role = p.createdByRole || p.modifiedByRole
+                                            const when = at ? new Date(at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''
+                                            if (!by && !when) {
+                                              return <em>Recorded on {formatDate(p.date)} · actor not stamped (legacy row)</em>
+                                            }
+                                            const friendlyBy = by === 'system' ? 'System (auto)' : (by || 'actor not stamped')
+                                            return `Logged ${when || formatDate(p.date)} · ${friendlyBy}${role ? ` (${role})` : ''}`
+                                          })()}
+                                        </div>
+                                      </td>
                                       <td>{paymentTypeBadge(p.paymentType)}</td>
                                       <td className="amount-cell">${p.amount.toLocaleString()}</td>
                                       <td>{p.method}</td>

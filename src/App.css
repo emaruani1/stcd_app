@@ -90,7 +90,8 @@
 }
 
 .form-group input,
-.form-group select {
+.form-group select,
+.form-group textarea {
   width: 100%;
   padding: 12px 16px;
   border: 1px solid var(--border);
@@ -103,10 +104,17 @@
 }
 
 .form-group input:focus,
-.form-group select:focus {
+.form-group select:focus,
+.form-group textarea:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(198, 151, 63, 0.15);
+}
+
+.pledge-notes-textarea {
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.45;
 }
 
 .login-btn {
@@ -732,11 +740,155 @@
   .pledges-table-wrap--transactions {
     overflow-x: auto;
   }
+  /* Reclaim pixels for the table at narrow widths. */
+  .admin-transactions-page .dashboard-section {
+    padding: 16px 12px;
+  }
+  /* Stacked filter bar: stretch every child including the Add button. */
+  .admin-transactions-page .admin-filter-bar > * {
+    width: 100%;
+  }
+  /* Tap-target floor for Edit/Delete when stacked vertically. */
+  .pledges-table--transactions .action-btn {
+    padding: 8px 14px;
+    font-size: 0.78rem;
+  }
 }
 
 @media (max-width: 600px) {
   .pledges-table--transactions [data-col="date"] {
     display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Tightest section padding so 5 columns get every available pixel. */
+  .admin-transactions-page .dashboard-section {
+    padding: 12px 8px;
+  }
+  .pledges-table--transactions th,
+  .pledges-table--transactions td {
+    padding: 8px 6px;
+    font-size: 0.78rem;
+  }
+  .pledges-table--transactions td[data-col="description"] {
+    min-width: 120px;
+  }
+  .pledges-table--transactions td[data-col="member"] strong {
+    font-size: 0.82rem;
+  }
+}
+
+/* Member-filter wrapper — flex-grows on desktop, full-width when stacked. */
+.admin-filter-member-wrap {
+  min-width: 250px;
+  flex: 1;
+}
+
+@media (max-width: 1024px) {
+  .admin-filter-member-wrap {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+/* ============================================
+   ADMIN PLEDGES — wide responsive table
+   9 columns; opt out of the 1100px reading-width
+   cap and progressively hide low-priority columns.
+   ============================================ */
+.portal-main:has(.admin-pledges-page) {
+  max-width: 1600px;
+}
+
+.admin-pledges-page {
+  width: 100%;
+}
+
+.pledges-table-wrap--pledges {
+  overflow-x: visible;
+}
+
+.pledges-table--pledges {
+  table-layout: auto;
+}
+
+.pledges-table--pledges th,
+.pledges-table--pledges td {
+  padding: 12px 10px;
+  font-size: 0.85rem;
+  vertical-align: top;
+}
+
+.pledges-table--pledges td[data-col="description"] {
+  white-space: normal;
+  min-width: 200px;
+}
+
+.pledges-table--pledges th[data-col="amount"],
+.pledges-table--pledges td[data-col="amount"] {
+  white-space: nowrap;
+}
+
+/* Drop order as viewport narrows:
+   1280: occasion + type (operator-level metadata)
+   1100: category badge (most categories are obvious from description)
+   900:  date
+   768:  tighter cells; safety-net horizontal scroll. */
+@media (max-width: 1280px) {
+  .pledges-table--pledges [data-col="occasion"],
+  .pledges-table--pledges [data-col="type"] {
+    display: none;
+  }
+}
+
+@media (max-width: 1100px) {
+  .pledges-table--pledges [data-col="category"] {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .pledges-table--pledges [data-col="date"] {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .pledges-table--pledges th,
+  .pledges-table--pledges td {
+    padding: 10px 8px;
+    font-size: 0.8rem;
+  }
+  .pledges-table-wrap--pledges {
+    overflow-x: auto;
+  }
+  .admin-pledges-page .dashboard-section {
+    padding: 16px 12px;
+  }
+  .admin-pledges-page .admin-filter-bar > * {
+    width: 100%;
+  }
+  .pledges-table--pledges .action-btn {
+    padding: 8px 14px;
+    font-size: 0.78rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .admin-pledges-page .dashboard-section {
+    padding: 12px 8px;
+  }
+  .pledges-table--pledges th,
+  .pledges-table--pledges td {
+    padding: 8px 6px;
+    font-size: 0.78rem;
+  }
+  .pledges-table--pledges td[data-col="description"] {
+    min-width: 140px;
+  }
+  .pledges-table--pledges td[data-col="member"] strong {
+    font-size: 0.82rem;
   }
 }
 

@@ -21,7 +21,7 @@ export default function Layout({ children, onLogout, userRole, currentMember }) 
 
   const adminNavItems = [
     { path: '/admin', label: 'Dashboard', icon: '📊' },
-    { path: '/admin/members', label: 'Members', icon: '👥' },
+    { path: '/admin/members', label: 'Contacts', icon: '👥' },
     { path: '/admin/billing', label: 'Membership Billing', icon: '🔁' },
     { path: '/admin/pledges', label: 'Pledges & Payments', icon: '💰' },
     { path: '/admin/transactions', label: 'Transactions', icon: '🧾' },

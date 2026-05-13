@@ -39,11 +39,13 @@ export function neutralReason(paymentType) {
 
 /**
  * Compute Account Balance from an array of transactions.
- * Returns a Number; negative means the member owes money.
+ * Returns a Number; negative means the member owes money. Canceled rows are
+ * ignored so cancellation flows through to the member's balance immediately.
  */
 export function computeAccountBalance(transactions) {
   let total = 0
   for (const t of transactions) {
+    if (t.canceled) continue
     const amt = Number(t.amount) || 0
     const impact = balanceImpact(t.paymentType)
     if (impact === 'charge') total -= amt
@@ -54,17 +56,20 @@ export function computeAccountBalance(transactions) {
 
 /**
  * Annotate transactions sorted oldest -> newest with a runningBalance field.
- * Pass in an array; returns a new array same length.
+ * Pass in an array; returns a new array. Canceled rows are dropped — members
+ * should not see them and they don't affect the running balance.
  */
 export function withRunningBalance(transactions) {
-  const sorted = [...transactions].sort((a, b) => {
-    const aDate = (a.date || '').localeCompare(b.date || '')
-    if (aDate !== 0) return aDate
-    // Within the same day: charges before payments so a same-day pair displays
-    // as -X then +X (net 0) rather than +X then -X (which briefly shows as positive).
-    const order = { charge: 0, neutral: 1, payment: 2 }
-    return (order[balanceImpact(a.paymentType)] ?? 1) - (order[balanceImpact(b.paymentType)] ?? 1)
-  })
+  const sorted = [...transactions]
+    .filter(t => !t.canceled)
+    .sort((a, b) => {
+      const aDate = (a.date || '').localeCompare(b.date || '')
+      if (aDate !== 0) return aDate
+      // Within the same day: charges before payments so a same-day pair displays
+      // as -X then +X (net 0) rather than +X then -X (which briefly shows as positive).
+      const order = { charge: 0, neutral: 1, payment: 2 }
+      return (order[balanceImpact(a.paymentType)] ?? 1) - (order[balanceImpact(b.paymentType)] ?? 1)
+    })
   let running = 0
   return sorted.map((t) => {
     const amt = Number(t.amount) || 0

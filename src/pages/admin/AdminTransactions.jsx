@@ -112,19 +112,12 @@ export default function AdminTransactions({
     return [...fromMembers, ...fromAdmin].sort((a, b) => new Date(b.date) - new Date(a.date))
   }, [allMembers, adminTransactions, products])
 
-  // Only show rows that actually went through the card processor — Approved,
-  // Declined, or Error. Manual ledger entries (cash, check, internal
-  // adjustments, idempotency claims) are excluded; they live in member
-  // statements / Pledges & Payments instead.
-  const processorRows = useMemo(
-    () => allTransactions.filter(t => {
-      const s = deriveStatus(t)
-      return s === 'approved' || s === 'declined' || s === 'error'
-    }),
-    [allTransactions],
-  )
-
-  const filtered = processorRows.filter(t => {
+  // Show every transaction the member has, regardless of how it was recorded.
+  // Card-processor results (Approved / Declined / Error) sit alongside manual
+  // ledger entries (cash, check, mark-paid) which derive a "Recorded" status.
+  // App.jsx already filters out internal idempotency-claim rows before they
+  // reach us. Admins can still narrow via the status pills/dropdown below.
+  const filtered = allTransactions.filter(t => {
     if (memberFilter !== 'all' && String(t.memberId) !== String(memberFilter)) return false
     if (aliasFilter !== 'all') {
       if (aliasFilter === '__primary__') { if (t.alias) return false }
@@ -150,15 +143,15 @@ export default function AdminTransactions({
     return m?.aliases || []
   })()
 
-  // Counts for the status strip — based on the processor-only list.
+  // Counts for the status strip — across every transaction (card + manual).
   const statusCounts = useMemo(() => {
-    const c = { all: processorRows.length, approved: 0, declined: 0, error: 0 }
-    for (const t of processorRows) {
+    const c = { all: allTransactions.length, approved: 0, declined: 0, error: 0, recorded: 0 }
+    for (const t of allTransactions) {
       const s = deriveStatus(t)
       c[s] = (c[s] || 0) + 1
     }
     return c
-  }, [processorRows])
+  }, [allTransactions])
 
   const handleAddTransaction = async () => {
     if (!newTxn.memberId || !newTxn.amount) return
@@ -252,20 +245,6 @@ export default function AdminTransactions({
     }
   }
 
-  const handleDelete = async (txn) => {
-    if (!confirm('Delete this transaction?')) return
-    try {
-      await api.deleteTransaction({
-        memberId: String(txn.memberId),
-        transactionId: txn.id,
-      })
-      showToast('Transaction deleted')
-      if (refreshData) refreshData()
-    } catch (err) {
-      showToast('Error: ' + err.message)
-    }
-  }
-
   const selectedMemberForAdd = allMembers.find(m => String(m.id) === String(newTxn.memberId))
   const selectedMemberAliases = selectedMemberForAdd?.aliases || []
   const unpaidPledges = selectedMemberForAdd
@@ -291,7 +270,7 @@ export default function AdminTransactions({
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <div style={{ minWidth: '250px' }}>
+        <div className="admin-filter-member-wrap">
           <MemberSearchSelect
             allMembers={allMembers}
             value={memberFilter === 'all' ? '' : memberFilter}
@@ -312,6 +291,7 @@ export default function AdminTransactions({
           <option value="approved">Approved only</option>
           <option value="declined">Declined only</option>
           <option value="error">Errors only</option>
+          <option value="recorded">Recorded (manual)</option>
         </select>
         <button className="pay-btn" style={{ padding: '10px 20px', fontSize: '0.85rem' }} onClick={() => setShowAddModal(true)}>
           + Add Transaction
@@ -344,6 +324,7 @@ export default function AdminTransactions({
           { k: 'approved', label: 'Approved',  fg: '#166534', bg: '#dcfce7' },
           { k: 'declined', label: 'Declined',  fg: '#991b1b', bg: '#fee2e2' },
           { k: 'error',    label: 'Errors',    fg: '#92400e', bg: '#fef3c7' },
+          { k: 'recorded', label: 'Recorded',  fg: '#1f2937', bg: '#f3f4f6' },
         ].map(s => (
           <button
             key={s.k}
@@ -406,18 +387,24 @@ export default function AdminTransactions({
                             {t.gatewayError}{t.gatewayErrorCode ? ` (${t.gatewayErrorCode})` : ''}
                           </div>
                         )}
-                        {(t.createdBy || t.modifiedBy) && (
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                            Logged {(() => {
-                              const at = t.createdAt || t.modifiedAt
-                              const by = t.createdByName || t.modifiedByName || t.createdBy || t.modifiedBy
-                              const role = t.createdByRole || t.modifiedByRole
-                              const when = at ? new Date(at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''
-                              const friendlyBy = by === 'system' ? 'System (auto)' : by
-                              return `${when ? when + ' · ' : ''}${friendlyBy}${role ? ` (${role})` : ''}`
-                            })()}
-                          </div>
-                        )}
+                        {/* Audit line on EVERY row. Falls back to txn date + a
+                            "(actor not recorded)" marker for legacy rows so we
+                            can see which transactions are missing the stamp. */}
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                          {(() => {
+                            const at = t.createdAt || t.modifiedAt
+                            const by = t.createdByName || t.modifiedByName || t.createdBy || t.modifiedBy
+                            const role = t.createdByRole || t.modifiedByRole
+                            const when = at
+                              ? new Date(at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+                              : ''
+                            if (!by && !when) {
+                              return <em>Recorded on {formatDate(t.date)} · actor not stamped (legacy row)</em>
+                            }
+                            const friendlyBy = by === 'system' ? 'System (auto)' : (by || 'actor not stamped')
+                            return `Logged ${when || formatDate(t.date)} · ${friendlyBy}${role ? ` (${role})` : ''}`
+                          })()}
+                        </div>
                       </td>
                       <td data-col="alias" style={{ fontSize: '0.82rem' }}>{t.alias || '—'}</td>
                       <td data-col="product" style={{ fontSize: '0.82rem' }}>{t.productName || t.productId || '—'}</td>
@@ -437,7 +424,6 @@ export default function AdminTransactions({
                       <td data-col="actions">
                         <div className="action-btns">
                           <button className="action-btn action-btn-pay" onClick={() => handleStartEdit(t)}>Edit</button>
-                          <button className="action-btn action-btn-delete" onClick={() => handleDelete(t)}>Delete</button>
                         </div>
                       </td>
                     </tr>
