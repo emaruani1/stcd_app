@@ -25,6 +25,7 @@ sponsorships_table = dynamodb.Table(os.environ.get('SPONSORSHIPS_TABLE', 'stcd_s
 emails_table = dynamodb.Table(os.environ.get('EMAILS_TABLE', 'stcd_emails'))
 settings_table = dynamodb.Table(os.environ.get('SETTINGS_TABLE', 'stcd_settings'))
 payment_methods_table = dynamodb.Table(os.environ.get('PAYMENT_METHODS_TABLE', 'stcd_payment_methods'))
+tenants_table = dynamodb.Table(os.environ.get('TENANTS_TABLE', 'stcd_tenants'))
 COGNITO_POOL_ID = os.environ.get('COGNITO_POOL_ID', 'us-east-2_Pna4Sv1p8')
 COGNITO_REGION = os.environ.get('COGNITO_REGION', 'us-east-2')
 COGNITO_CLIENT_ID = os.environ.get('COGNITO_CLIENT_ID', '7hvnos43j267cl5v1m2knojeda')
@@ -202,16 +203,85 @@ def _verify_jwt(authorization_header):
 def _get_actor():
     """
     Pull the verified user identity captured at lambda_handler entry.
-    Returns dict with email, role, memberId, sub. Empty if unverified
-    (only the EventBridge cron path reaches here without verified claims).
+    Returns dict with email, role, memberId, sub, tenantId, isSuperadmin.
+    Empty if unverified (only the EventBridge cron path reaches here without
+    verified claims).
+
+    Transition rule for tenantId: pre-Phase-0 users were created before the
+    `custom:tenantId` schema attribute existed (Mutable=false, so AWS won't
+    let us backfill them). Their JWT claim is empty — we default it to 'stcd'
+    so legacy users keep working. New users created post-Phase-0 always get
+    the attribute stamped at admin-create-user time and the immutable schema
+    prevents tampering thereafter. Remove this default once those legacy
+    users are recreated, or when we onboard a second tenant.
     """
     claims = _current_event.get('_verified_claims') or {}
+    raw_tenant = (claims.get('custom:custom:tenantId', '') or '').strip()
+    raw_super = (claims.get('custom:custom:isSuperadmin', '') or '').strip().lower()
     return {
         'email': claims.get('email', ''),
         'role': claims.get('custom:custom:role', ''),
         'memberId': claims.get('custom:custom:memberId', ''),
         'sub': claims.get('sub', ''),
+        'tenantId': raw_tenant or 'stcd',
+        'isSuperadmin': raw_super == 'true',
     }
+
+
+def _is_superadmin():
+    return bool(_get_actor().get('isSuperadmin'))
+
+
+def _require_tenant():
+    """Return the actor's tenantId. Always non-empty thanks to the default
+    rule in _get_actor(); kept as a helper so the call sites read clearly."""
+    return _get_actor()['tenantId']
+
+
+def _assert_tenant_match(record_tenant):
+    """Return True if the actor may access a record stamped with record_tenant.
+    Superadmins (custom:isSuperadmin=true) cross tenant boundaries; everyone
+    else is locked to their own tenantId. An unstamped record (empty/None
+    record_tenant) is treated as belonging to 'stcd' for the same transition
+    reason as _get_actor()."""
+    if _is_superadmin():
+        return True
+    actor_tenant = _get_actor()['tenantId']
+    rec_tenant = (record_tenant or '').strip() or 'stcd'
+    return bool(actor_tenant) and actor_tenant == rec_tenant
+
+
+# Per-container cache for tenant rows. Lambda keeps globals warm between
+# invocations on the same container, so a hot path re-reading the same
+# tenant in a single request (or across requests on the same container)
+# avoids repeated DynamoDB hits. Bust when a tenant row is updated.
+_tenant_cache = {}
+
+
+def _load_tenant(tenant_id):
+    """Fetch a tenant row from stcd_tenants. Returns the raw item dict or
+    None if the tenant isn't found. Caches within the warm container."""
+    if not tenant_id:
+        return None
+    cached = _tenant_cache.get(tenant_id)
+    if cached is not None:
+        return cached
+    try:
+        item = tenants_table.get_item(Key={'tenantId': tenant_id}).get('Item')
+    except Exception as e:
+        print(f"[tenant] load failed for {tenant_id}: {e}")
+        return None
+    if item:
+        _tenant_cache[tenant_id] = item
+    return item
+
+
+def _bust_tenant_cache(tenant_id=None):
+    """Drop one tenant or the whole cache (call after writes to stcd_tenants)."""
+    if tenant_id:
+        _tenant_cache.pop(tenant_id, None)
+    else:
+        _tenant_cache.clear()
 
 
 def _actor_stamp_create():

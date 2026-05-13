@@ -87,6 +87,15 @@ One deployment of the codebase serves many synagogues. Each synagogue (a "tenant
 
 ## Remediation plan
 
+### Phase 0 execution notes (2026-05-13)
+
+- ✅ Cognito attributes `custom:tenantId` (immutable) and `custom:isSuperadmin` (mutable) added to pool `us-east-2_Pna4Sv1p8`. Schema name with the codebase's existing doubled-prefix convention: `custom:custom:tenantId`. App client `ReadAttributes`/`WriteAttributes` are null = all attributes allowed → new claims auto-flow into the JWT.
+- ✅ DynamoDB table `stcd_tenants` created (PAY_PER_REQUEST, PITR enabled). First row seeded for tenant `stcd` with current branding + Sola creds copied from the Lambda env.
+- ✅ S3 bucket `stcd-saas-tenant-assets-574630139917` created (block-all-public, SSE-S3, versioning). CloudFront/OAC deferred to Phase 4 (when the upload UI lands).
+- ⚠️ **AWS limitation discovered:** `Mutable=false` means the attribute can NEVER be written — including the first time, on existing users. AWS only accepts the value at user *creation*. The 3 pre-Phase-0 users (operator + 2 test accounts) therefore cannot be backfilled.
+  - **Resolution:** transition rule in `_get_actor()` — if `custom:custom:tenantId` claim is empty, default to `'stcd'`. New users created post-Phase-0 always get the attribute stamped via `admin-create-user`; the immutable schema then prevents tampering for the user's lifetime.
+  - Remove the transition rule once the 3 legacy users are delete-and-recreated (or whenever we onboard a second tenant, since by then any empty-tenantId user is a real bug).
+
 ### Phase 0 — Foundations (Cognito + Tenants table + S3 bucket + helpers)
 
 | # | Target | Change | Why |
