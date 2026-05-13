@@ -33,7 +33,13 @@ tenants_table = dynamodb.Table(os.environ.get('TENANTS_TABLE', 'stcd_tenants'))
 #   dual_write_read_v2      — writes hit both, reads come from v2 (cutover)
 #   v2_only                 — reads + writes go to v2 only (post-confidence)
 # Per-table env var so we can roll each table independently.
-settings_table_v2 = dynamodb.Table(os.environ.get('SETTINGS_TABLE_V2', 'stcd_settings_v2'))
+settings_table_v2        = dynamodb.Table(os.environ.get('SETTINGS_TABLE_V2',        'stcd_settings_v2'))
+emails_table_v2          = dynamodb.Table(os.environ.get('EMAILS_TABLE_V2',          'stcd_emails_v2'))
+sponsorships_table_v2    = dynamodb.Table(os.environ.get('SPONSORSHIPS_TABLE_V2',    'stcd_sponsorships_v2'))
+members_table_v2         = dynamodb.Table(os.environ.get('MEMBERS_TABLE_V2',         'stcd_members_v2'))
+payment_methods_table_v2 = dynamodb.Table(os.environ.get('PAYMENT_METHODS_TABLE_V2', 'stcd_payment_methods_v2'))
+pledges_table_v2         = dynamodb.Table(os.environ.get('PLEDGES_TABLE_V2',         'stcd_pledges_v2'))
+transactions_table_v2    = dynamodb.Table(os.environ.get('TRANSACTIONS_TABLE_V2',    'stcd_transactions_v2'))
 COGNITO_POOL_ID = os.environ.get('COGNITO_POOL_ID', 'us-east-2_Pna4Sv1p8')
 COGNITO_REGION = os.environ.get('COGNITO_REGION', 'us-east-2')
 COGNITO_CLIENT_ID = os.environ.get('COGNITO_CLIENT_ID', '7hvnos43j267cl5v1m2knojeda')
@@ -399,26 +405,15 @@ def _idempotent_txn_id(key, suffix=''):
 
 def _try_atomic_put_txn(item):
     """
-    Try to write `item` to stcd_transactions only if its transactionId doesn't
-    already exist. Returns (won, existing_item):
-      - (True,  None)            if we won the race / wrote the row
-      - (False, existing_item)   if the row already existed (other request won)
+    Try to write `item` only if its transactionId doesn't already exist.
+    Returns (won, existing_item). Goes through the migration shim so the
+    dual-write branch sees the same conditional semantics.
     """
-    try:
-        transactions_table.put_item(
-            Item=item,
-            ConditionExpression='attribute_not_exists(transactionId)',
-        )
+    won = _txn_put_conditional(item, condition_expression='attribute_not_exists(transactionId)')
+    if won:
         return True, None
-    except ClientError as e:
-        code = e.response.get('Error', {}).get('Code', '')
-        if code == 'ConditionalCheckFailedException':
-            existing = transactions_table.get_item(Key={
-                'memberId': item['memberId'],
-                'transactionId': item['transactionId'],
-            }).get('Item')
-            return False, existing
-        raise
+    existing = _txn_get(item['memberId'], item['transactionId'])
+    return False, existing
 
 
 def _claim_charge_idempotency(member_id, idempotency_key):
@@ -454,9 +449,7 @@ def _claim_charge_idempotency(member_id, idempotency_key):
         if existing and existing.get('status') in ('completed', 'failed'):
             return False, existing
         time.sleep(0.1)
-        existing = transactions_table.get_item(Key={
-            'memberId': str(member_id), 'transactionId': txn_id,
-        }).get('Item')
+        existing = _txn_get(str(member_id), txn_id)
     # Took too long — fail closed.
     return False, existing
 
@@ -468,11 +461,9 @@ def _finish_charge_idempotency(member_id, idempotency_key, result, status='compl
     if not idempotency_key:
         return
     try:
-        transactions_table.update_item(
-            Key={
-                'memberId': str(member_id),
-                'transactionId': _idempotent_txn_id(idempotency_key, suffix='-claim'),
-            },
+        _txn_update(
+            str(member_id),
+            _idempotent_txn_id(idempotency_key, suffix='-claim'),
             UpdateExpression='SET #s = :s, #r = :r, completedAt = :t',
             ExpressionAttributeNames={'#s': 'status', '#r': 'result'},
             ExpressionAttributeValues={
@@ -509,18 +500,9 @@ def extract_path_id(path, prefix):
 
 
 def _all_member_transactions(member_id):
-    """Fetch every transaction row for a member."""
-    res = transactions_table.query(
-        KeyConditionExpression=Key('memberId').eq(str(member_id))
-    )
-    items = list(res.get('Items', []))
-    while 'LastEvaluatedKey' in res:
-        res = transactions_table.query(
-            KeyConditionExpression=Key('memberId').eq(str(member_id)),
-            ExclusiveStartKey=res['LastEvaluatedKey'],
-        )
-        items.extend(res.get('Items', []))
-    return items
+    """Fetch every transaction row for a member. Delegates to the migration
+    helper so this respects TRANSACTIONS_TABLE_MODE."""
+    return _txn_query_by_member(str(member_id))
 
 
 def compute_account_balance(member_id):
@@ -626,9 +608,7 @@ def _write_charge_payment_pair(member_id, date, amount, charge_type, payment_typ
         # Atomic claim — second writer of the same pair is rejected here.
         won, existing_charge = _try_atomic_put_txn(charge)
         if not won:
-            existing_payment = transactions_table.get_item(Key={
-                'memberId': member_id_str, 'transactionId': payment_txn_id,
-            }).get('Item') or {}
+            existing_payment = _txn_get(member_id_str, payment_txn_id) or {}
             return existing_charge or charge, existing_payment or payment
         won2, existing_payment = _try_atomic_put_txn(payment)
         # If charge wrote but payment somehow already existed, fall through
@@ -636,8 +616,8 @@ def _write_charge_payment_pair(member_id, date, amount, charge_type, payment_typ
         if not won2:
             return charge, existing_payment or payment
     else:
-        transactions_table.put_item(Item=charge)
-        transactions_table.put_item(Item=payment)
+        _txn_put(charge)
+        _txn_put(payment)
 
     # If part of the payment was funded by stored Account Credit, debit it.
     if balance_applied > 0:
@@ -809,14 +789,68 @@ def lambda_handler(event, context):
 
 
 # ===================== MEMBERS =====================
+# Phase 1 migration shim — MEMBERS_TABLE_MODE env var routes reads/writes.
+
+def _members_get(member_id):
+    tenant_id = _require_tenant()
+    if _should_read_v2('MEMBERS'):
+        res = members_table_v2.get_item(Key={'tenantId': tenant_id, 'memberId': str(member_id)})
+    else:
+        res = members_table.get_item(Key={'memberId': member_id})
+    return res.get('Item')
+
+
+def _members_list_all_for_tenant():
+    tenant_id = _require_tenant()
+    items = []
+    last_key = None
+    while True:
+        kw = {}
+        if last_key:
+            kw['ExclusiveStartKey'] = last_key
+        if _should_read_v2('MEMBERS'):
+            kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
+            res = members_table_v2.query(**kw)
+        else:
+            res = members_table.scan(**kw)
+        items.extend(res.get('Items', []))
+        last_key = res.get('LastEvaluatedKey')
+        if not last_key:
+            break
+    return items
+
+
+def _members_put(item):
+    """Write a full member record. Stamps tenantId on the v2 write so the
+    composite PK is well-formed; memberId is coerced to string."""
+    tenant_id = _require_tenant()
+    if _should_write_legacy('MEMBERS'):
+        members_table.put_item(Item=item)
+    if _should_write_v2('MEMBERS'):
+        v2_item = {**item, 'tenantId': tenant_id, 'memberId': str(item.get('memberId', ''))}
+        members_table_v2.put_item(Item=v2_item)
+
+
+def _members_update(member_id, **kwargs):
+    """Wrap update_item — accepts UpdateExpression, ExpressionAttribute*."""
+    tenant_id = _require_tenant()
+    if _should_write_legacy('MEMBERS'):
+        members_table.update_item(Key={'memberId': member_id}, **kwargs)
+    if _should_write_v2('MEMBERS'):
+        members_table_v2.update_item(Key={'tenantId': tenant_id, 'memberId': str(member_id)}, **kwargs)
+
+
+def _members_delete(member_id):
+    tenant_id = _require_tenant()
+    if _should_write_legacy('MEMBERS'):
+        members_table.delete_item(Key={'memberId': member_id})
+    if _should_write_v2('MEMBERS'):
+        members_table_v2.delete_item(Key={'tenantId': tenant_id, 'memberId': str(member_id)})
+
 
 def get_members(event):
     qs = event.get('queryStringParameters') or {}
-    result = members_table.scan()
-    items = result['Items']
-    while 'LastEvaluatedKey' in result:
-        result = members_table.scan(ExclusiveStartKey=result['LastEvaluatedKey'])
-        items.extend(result['Items'])
+    items = _members_list_all_for_tenant()
 
     # Sort by lastName, firstName
     items.sort(key=lambda x: (x.get('lastName', '').lower(), x.get('firstName', '').lower()))
@@ -840,8 +874,7 @@ def get_members(event):
 def get_member(member_id):
     if not (_is_admin() or _is_pledger() or _is_self(member_id)):
         return _forbid()
-    result = members_table.get_item(Key={'memberId': member_id})
-    item = result.get('Item')
+    item = _members_get(member_id)
     if not item:
         return respond(404, {'error': 'Member not found'})
     # Augment with computed Account Balance.
@@ -861,7 +894,7 @@ def create_member(body):
     body['memberId'] = member_id
     body['balance'] = Decimal(str(body.get('balance', 0)))
     body.update(_actor_stamp_create())
-    members_table.put_item(Item=body)
+    _members_put(body)
     return respond(201, body)
 
 
@@ -876,7 +909,7 @@ def update_member(member_id, body):
         body = {k: v for k, v in body.items() if k in MEMBER_SELF_EDITABLE_FIELDS}
 
     # First fetch existing member to avoid overwriting with empty values
-    existing = members_table.get_item(Key={'memberId': member_id}).get('Item', {})
+    existing = _members_get(member_id) or {}
 
     # Always stamp who/when on every member update
     body = {**body, **_actor_stamp_modify()}
@@ -911,8 +944,8 @@ def update_member(member_id, body):
     if not expr_parts:
         return respond(400, {'error': 'No fields to update'})
 
-    members_table.update_item(
-        Key={'memberId': member_id},
+    _members_update(
+        member_id,
         UpdateExpression='SET ' + ', '.join(expr_parts),
         ExpressionAttributeNames=expr_names,
         ExpressionAttributeValues=expr_values,
@@ -927,8 +960,8 @@ def merge_members(body):
     secondary_id = body['secondaryId']
     field_values = body.get('fieldValues', {})
 
-    primary = members_table.get_item(Key={'memberId': primary_id}).get('Item', {})
-    secondary = members_table.get_item(Key={'memberId': secondary_id}).get('Item', {})
+    primary = _members_get(primary_id) or {}
+    secondary = _members_get(secondary_id) or {}
 
     if not primary or not secondary:
         return respond(404, {'error': 'One or both members not found'})
@@ -953,51 +986,173 @@ def merge_members(body):
 
     # Save merged primary
     primary.update(_actor_stamp_modify())
-    members_table.put_item(Item=primary)
+    _members_put(primary)
 
     # Move secondary's transactions to primary
-    sec_txns = transactions_table.query(KeyConditionExpression=Key('memberId').eq(secondary_id))
-    for txn in sec_txns.get('Items', []):
-        transactions_table.delete_item(Key={'memberId': secondary_id, 'transactionId': txn['transactionId']})
+    for txn in _txn_query_by_member(secondary_id):
+        _txn_delete(secondary_id, txn['transactionId'])
         txn['memberId'] = primary_id
-        transactions_table.put_item(Item=txn)
+        _txn_put(txn)
 
     # Move secondary's pledges to primary
-    sec_pledges = pledges_table.query(KeyConditionExpression=Key('memberId').eq(secondary_id))
-    for plg in sec_pledges.get('Items', []):
-        pledges_table.delete_item(Key={'memberId': secondary_id, 'pledgeId': plg['pledgeId']})
+    for plg in _pledges_list_for_member(secondary_id):
+        _pledge_delete(secondary_id, plg['pledgeId'])
         plg['memberId'] = primary_id
-        pledges_table.put_item(Item=plg)
+        _pledge_put(plg)
 
     # Delete secondary member
-    members_table.delete_item(Key={'memberId': secondary_id})
+    _members_delete(secondary_id)
 
     return respond(200, {'message': 'Members merged', 'memberId': primary_id})
 
 
 # ===================== TRANSACTIONS =====================
+# Phase 1 migration shim — TRANSACTIONS_TABLE_MODE env var routes reads/writes.
+# v2 schema: PK tenantId + SK transactionId. Two GSIs:
+#   - member-index   on (tenantIdMemberId, txnDate)
+#   - date-index     on (tenantIdYearMonth, txnDate)
+# These synthesised composite attrs are written on every v2 row.
+
+
+def _txn_v2_extra_attrs(item):
+    tenant_id = _require_tenant()
+    member_id = str(item.get('memberId', ''))
+    year_month = item.get('yearMonth', '') or ''
+    out = {
+        'tenantId': tenant_id,
+        'tenantIdMemberId': f"{tenant_id}#{member_id}",
+    }
+    if year_month:
+        out['tenantIdYearMonth'] = f"{tenant_id}#{year_month}"
+    return out
+
+
+def _txn_get(member_id, transaction_id):
+    """Read a single transaction. member_id required for the legacy key
+    (in v2 it's not part of the key, but we accept it for source-compat)."""
+    tenant_id = _require_tenant()
+    if _should_read_v2('TRANSACTIONS'):
+        res = transactions_table_v2.get_item(Key={'tenantId': tenant_id, 'transactionId': transaction_id})
+    else:
+        res = transactions_table.get_item(Key={'memberId': str(member_id), 'transactionId': transaction_id})
+    return res.get('Item')
+
+
+def _txn_query_by_member(member_id):
+    tenant_id = _require_tenant()
+    if _should_read_v2('TRANSACTIONS'):
+        res = transactions_table_v2.query(
+            IndexName='member-index',
+            KeyConditionExpression=Key('tenantIdMemberId').eq(f"{tenant_id}#{member_id}"),
+        )
+    else:
+        res = transactions_table.query(KeyConditionExpression=Key('memberId').eq(str(member_id)))
+    return res.get('Items', [])
+
+
+def _txn_query_by_yearmonth(year_month):
+    tenant_id = _require_tenant()
+    if _should_read_v2('TRANSACTIONS'):
+        res = transactions_table_v2.query(
+            IndexName='date-index',
+            KeyConditionExpression=Key('tenantIdYearMonth').eq(f"{tenant_id}#{year_month}"),
+        )
+    else:
+        res = transactions_table.query(
+            IndexName='date-index',
+            KeyConditionExpression=Key('yearMonth').eq(year_month),
+        )
+    return res.get('Items', [])
+
+
+def _txn_scan_all_for_tenant():
+    tenant_id = _require_tenant()
+    items = []
+    last_key = None
+    while True:
+        kw = {}
+        if last_key:
+            kw['ExclusiveStartKey'] = last_key
+        if _should_read_v2('TRANSACTIONS'):
+            kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
+            res = transactions_table_v2.query(**kw)
+        else:
+            res = transactions_table.scan(**kw)
+        items.extend(res.get('Items', []))
+        last_key = res.get('LastEvaluatedKey')
+        if not last_key:
+            break
+    return items
+
+
+def _txn_put(item):
+    if _should_write_legacy('TRANSACTIONS'):
+        transactions_table.put_item(Item=item)
+    if _should_write_v2('TRANSACTIONS'):
+        transactions_table_v2.put_item(Item={**item, **_txn_v2_extra_attrs(item)})
+
+
+def _txn_put_conditional(item, condition_expression=None):
+    """Used by the idempotency claim — supports ConditionExpression. Mirrors
+    the legacy semantics: returns True if the put succeeded, False if the
+    condition failed (duplicate). Only the legacy table's response governs
+    the return value to keep semantics identical; v2 gets a best-effort
+    write since the same idempotency key on v2 would similarly fail.
+    """
+    legacy_ok = True
+    if _should_write_legacy('TRANSACTIONS'):
+        try:
+            kw = {'Item': item}
+            if condition_expression:
+                kw['ConditionExpression'] = condition_expression
+            transactions_table.put_item(**kw)
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                legacy_ok = False
+            else:
+                raise
+    if _should_write_v2('TRANSACTIONS'):
+        try:
+            kw = {'Item': {**item, **_txn_v2_extra_attrs(item)}}
+            if condition_expression:
+                kw['ConditionExpression'] = condition_expression
+            transactions_table_v2.put_item(**kw)
+        except ClientError as e:
+            # Ignore failed condition on v2 if legacy succeeded — dual-write
+            # consistency over strict-condition behaviour.
+            if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
+                print(f"[txn] v2 put_conditional non-condition error: {e}")
+    return legacy_ok
+
+
+def _txn_update(member_id, transaction_id, **kwargs):
+    tenant_id = _require_tenant()
+    if _should_write_legacy('TRANSACTIONS'):
+        transactions_table.update_item(
+            Key={'memberId': str(member_id), 'transactionId': transaction_id},
+            **kwargs,
+        )
+    if _should_write_v2('TRANSACTIONS'):
+        transactions_table_v2.update_item(
+            Key={'tenantId': tenant_id, 'transactionId': transaction_id},
+            **kwargs,
+        )
+
+
+def _txn_delete(member_id, transaction_id):
+    tenant_id = _require_tenant()
+    if _should_write_legacy('TRANSACTIONS'):
+        transactions_table.delete_item(Key={'memberId': str(member_id), 'transactionId': transaction_id})
+    if _should_write_v2('TRANSACTIONS'):
+        transactions_table_v2.delete_item(Key={'tenantId': tenant_id, 'transactionId': transaction_id})
+
 
 def get_transactions(event):
     if not _is_admin():
         return _forbid()
     qs = event.get('queryStringParameters') or {}
-
-    # If yearMonth provided, use GSI
     year_month = qs.get('yearMonth')
-    if year_month:
-        result = transactions_table.query(
-            IndexName='date-index',
-            KeyConditionExpression=Key('yearMonth').eq(year_month),
-        )
-        return respond(200, result['Items'])
-
-    # Otherwise scan all
-    result = transactions_table.scan()
-    items = result['Items']
-    while 'LastEvaluatedKey' in result:
-        result = transactions_table.scan(ExclusiveStartKey=result['LastEvaluatedKey'])
-        items.extend(result['Items'])
-
+    items = _txn_query_by_yearmonth(year_month) if year_month else _txn_scan_all_for_tenant()
     items.sort(key=lambda x: x.get('date', ''), reverse=True)
     return respond(200, items)
 
@@ -1005,10 +1160,7 @@ def get_transactions(event):
 def get_member_transactions(member_id, event):
     if not (_is_admin() or _is_self(member_id)):
         return _forbid()
-    result = transactions_table.query(
-        KeyConditionExpression=Key('memberId').eq(member_id),
-    )
-    items = result['Items']
+    items = _txn_query_by_member(member_id)
     items.sort(key=lambda x: x.get('date', ''), reverse=True)
     return respond(200, items)
 
@@ -1070,7 +1222,7 @@ def create_transaction(body):
         if not won:
             return respond(200, {**(existing or item), 'idempotent': True})
     else:
-        transactions_table.put_item(Item=item)
+        _txn_put(item)
 
     # If this is a pledge payment linked to a specific pledge, update the pledge
     if body.get('pledgeId') and body.get('paymentType') == 'pledge':
@@ -1093,8 +1245,8 @@ def create_transaction(body):
 def _adjust_member_balance(member_id, delta):
     """Atomically add `delta` (Decimal, can be negative) to a member's stored balance."""
     try:
-        members_table.update_item(
-            Key={'memberId': str(member_id)},
+        _members_update(
+            str(member_id),
             UpdateExpression='SET balance = if_not_exists(balance, :zero) + :d',
             ExpressionAttributeValues={':zero': Decimal('0'), ':d': delta},
         )
@@ -1175,9 +1327,7 @@ def settle_fee(body):
     if not member_id or not fee_txn_id:
         return respond(400, {'error': 'memberId and feeTransactionId are required'})
 
-    fee = transactions_table.get_item(
-        Key={'memberId': str(member_id), 'transactionId': fee_txn_id}
-    ).get('Item')
+    fee = _txn_get(str(member_id), fee_txn_id)
     if not fee:
         return respond(404, {'error': 'Fee transaction not found'})
 
@@ -1224,7 +1374,7 @@ def settle_fee(body):
         **_actor_stamp_create(),
     }
     payment_row = {k: v for k, v in payment_row.items() if v not in ('', None)}
-    transactions_table.put_item(Item=payment_row)
+    _txn_put(payment_row)
     return respond(201, payment_row)
 
 
@@ -1237,8 +1387,8 @@ def set_member_autopay(member_id, body):
     if enabled and not payment_method_id:
         return respond(400, {'error': 'paymentMethodId is required when enabling autopay'})
     stamp = _actor_stamp_modify()
-    members_table.update_item(
-        Key={'memberId': str(member_id)},
+    _members_update(
+        str(member_id),
         UpdateExpression=(
             'SET autopayEnabled = :e, autopayPaymentMethodId = :p, '
             'modifiedBy = :mb, modifiedByRole = :mr, modifiedByMemberId = :mm, modifiedAt = :ma'
@@ -1303,7 +1453,7 @@ def charge_membership_fee(body):
         return respond(400, {'error': 'amount must be > 0'})
 
     # Fetch the fee txn to confirm it exists and is unpaid.
-    fee = transactions_table.get_item(Key={'memberId': member_id, 'transactionId': fee_txn_id}).get('Item')
+    fee = _txn_get(member_id, fee_txn_id)
     if not fee or fee.get('paymentType') != 'membership-fee':
         return respond(404, {'error': 'membership-fee transaction not found'})
 
@@ -1330,14 +1480,10 @@ def charge_membership_fee(body):
         })
 
     # Resolve member + payment method.
-    member = members_table.get_item(Key={'memberId': member_id}).get('Item')
+    member = _members_get(member_id)
     if not member:
         return respond(404, {'error': 'Member not found'})
-    pm_key = int(member_id) if member_id.isdigit() else member_id
-    pm = payment_methods_table.get_item(Key={
-        'memberId': pm_key,
-        'paymentMethodId': payment_method_id,
-    }).get('Item')
+    pm = _pm_get(member_id, payment_method_id)
     if not pm:
         return respond(404, {'error': 'Saved card not found for this member'})
 
@@ -1386,13 +1532,13 @@ def charge_membership_fee(body):
         **_actor_stamp_create(),
     }
     payment_txn = {k: v for k, v in payment_txn.items() if v not in ('', None)}
-    transactions_table.put_item(Item=payment_txn)
+    _txn_put(payment_txn)
 
     # Stamp pairId onto the fee so future runs short-circuit cleanly.
     if not fee.get('pairId'):
         try:
-            transactions_table.update_item(
-                Key={'memberId': member_id, 'transactionId': fee_txn_id},
+            _txn_update(
+                member_id, fee_txn_id,
                 UpdateExpression='SET pairId = :p',
                 ExpressionAttributeValues={':p': pair_id},
             )
@@ -1429,11 +1575,7 @@ def run_monthly_membership_billing():
 
     pricing = _membership_pricing_from_settings()
 
-    res = members_table.scan()
-    members = list(res.get('Items', []))
-    while 'LastEvaluatedKey' in res:
-        res = members_table.scan(ExclusiveStartKey=res['LastEvaluatedKey'])
-        members.extend(res.get('Items', []))
+    members = _members_list_all_for_tenant()
 
     summary = {
         'fees_created': 0,
@@ -1507,7 +1649,7 @@ def run_monthly_membership_billing():
             'category': 'Membership',
             **_system_stamp_create(),
         }
-        transactions_table.put_item(Item=charge_txn)
+        _txn_put(charge_txn)
         summary['fees_created'] += 1
 
     print(f"[daily billing] day={today_day} {summary}")
@@ -1520,7 +1662,7 @@ def update_transaction(body):
     member_id = body['memberId']
     txn_id = body['transactionId']
 
-    existing = transactions_table.get_item(Key={'memberId': member_id, 'transactionId': txn_id}).get('Item', {})
+    existing = _txn_get(member_id, txn_id) or {}
 
     update_fields = {k: v for k, v in body.items() if k not in ('memberId', 'transactionId')}
     if 'amount' in update_fields:
@@ -1551,8 +1693,8 @@ def update_transaction(body):
         expr_values[f":{k}"] = v
 
     if expr_parts:
-        transactions_table.update_item(
-            Key={'memberId': member_id, 'transactionId': txn_id},
+        _txn_update(
+            member_id, txn_id,
             UpdateExpression='SET ' + ', '.join(expr_parts),
             ExpressionAttributeNames=expr_names,
             ExpressionAttributeValues=expr_values,
@@ -1580,8 +1722,8 @@ def cancel_transaction(body):
         return respond(400, {'error': 'cancellationReason is required'})
     actor = _get_actor()
     now = _now_iso()
-    transactions_table.update_item(
-        Key={'memberId': member_id, 'transactionId': txn_id},
+    _txn_update(
+        member_id, txn_id,
         UpdateExpression=(
             'SET #canceled = :c, #reason = :r, '
             '#canceledBy = :cb, #canceledByRole = :cr, '
@@ -1614,15 +1756,88 @@ def cancel_transaction(body):
 
 
 # ===================== PLEDGES =====================
+# Phase 1 migration shim — PLEDGES_TABLE_MODE env var routes reads/writes.
+# v2 schema: PK tenantId + SK pledgeId. New GSI member-index on
+# (tenantIdMemberId, date) so per-member queries still work.
+
+
+def _pledges_v2_extra_attrs(item):
+    """Synthesise the GSI partition key for v2."""
+    tenant_id = _require_tenant()
+    return {
+        'tenantId': tenant_id,
+        'tenantIdMemberId': f"{tenant_id}#{item.get('memberId', '')}",
+    }
+
+
+def _pledge_get(member_id, pledge_id):
+    tenant_id = _require_tenant()
+    if _should_read_v2('PLEDGES'):
+        res = pledges_table_v2.get_item(Key={'tenantId': tenant_id, 'pledgeId': pledge_id})
+    else:
+        res = pledges_table.get_item(Key={'memberId': member_id, 'pledgeId': pledge_id})
+    return res.get('Item')
+
+
+def _pledges_list_all_for_tenant():
+    tenant_id = _require_tenant()
+    items = []
+    last_key = None
+    while True:
+        kw = {}
+        if last_key:
+            kw['ExclusiveStartKey'] = last_key
+        if _should_read_v2('PLEDGES'):
+            kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
+            res = pledges_table_v2.query(**kw)
+        else:
+            res = pledges_table.scan(**kw)
+        items.extend(res.get('Items', []))
+        last_key = res.get('LastEvaluatedKey')
+        if not last_key:
+            break
+    return items
+
+
+def _pledges_list_for_member(member_id):
+    tenant_id = _require_tenant()
+    if _should_read_v2('PLEDGES'):
+        res = pledges_table_v2.query(
+            IndexName='member-index',
+            KeyConditionExpression=Key('tenantIdMemberId').eq(f"{tenant_id}#{member_id}"),
+        )
+    else:
+        res = pledges_table.query(KeyConditionExpression=Key('memberId').eq(member_id))
+    return res.get('Items', [])
+
+
+def _pledge_put(item):
+    if _should_write_legacy('PLEDGES'):
+        pledges_table.put_item(Item=item)
+    if _should_write_v2('PLEDGES'):
+        pledges_table_v2.put_item(Item={**item, **_pledges_v2_extra_attrs(item)})
+
+
+def _pledge_update(member_id, pledge_id, **kwargs):
+    tenant_id = _require_tenant()
+    if _should_write_legacy('PLEDGES'):
+        pledges_table.update_item(Key={'memberId': member_id, 'pledgeId': pledge_id}, **kwargs)
+    if _should_write_v2('PLEDGES'):
+        pledges_table_v2.update_item(Key={'tenantId': tenant_id, 'pledgeId': pledge_id}, **kwargs)
+
+
+def _pledge_delete(member_id, pledge_id):
+    tenant_id = _require_tenant()
+    if _should_write_legacy('PLEDGES'):
+        pledges_table.delete_item(Key={'memberId': member_id, 'pledgeId': pledge_id})
+    if _should_write_v2('PLEDGES'):
+        pledges_table_v2.delete_item(Key={'tenantId': tenant_id, 'pledgeId': pledge_id})
+
 
 def get_pledges(event):
     if not _is_admin():
         return _forbid()
-    result = pledges_table.scan()
-    items = result['Items']
-    while 'LastEvaluatedKey' in result:
-        result = pledges_table.scan(ExclusiveStartKey=result['LastEvaluatedKey'])
-        items.extend(result['Items'])
+    items = _pledges_list_all_for_tenant()
     items.sort(key=lambda x: x.get('date', ''), reverse=True)
     return respond(200, items)
 
@@ -1630,10 +1845,7 @@ def get_pledges(event):
 def get_member_pledges(member_id):
     if not (_is_admin() or _is_self(member_id)):
         return _forbid()
-    result = pledges_table.query(
-        KeyConditionExpression=Key('memberId').eq(member_id),
-    )
-    items = result['Items']
+    items = _pledges_list_for_member(member_id)
     items.sort(key=lambda x: x.get('date', ''), reverse=True)
     return respond(200, items)
 
@@ -1668,7 +1880,7 @@ def create_pledge(body):
     if notes:
         item['notes'] = notes
 
-    pledges_table.put_item(Item=item)
+    _pledge_put(item)
 
     # Mirror the pledge as a charge transaction so the ledger and
     # Account Balance see -$amount immediately. Carries the same alias so the
@@ -1689,7 +1901,7 @@ def create_pledge(body):
         **actor_stamp,
     }
     charge_txn = {k: v for k, v in charge_txn.items() if v not in ('', None)}
-    transactions_table.put_item(Item=charge_txn)
+    _txn_put(charge_txn)
     return respond(201, item)
 
 
@@ -1699,7 +1911,7 @@ def update_pledge(body):
     member_id = body['memberId']
     pledge_id = body['pledgeId']
 
-    existing = pledges_table.get_item(Key={'memberId': member_id, 'pledgeId': pledge_id}).get('Item', {})
+    existing = _pledge_get(member_id, pledge_id) or {}
 
     update_fields = {k: v for k, v in body.items() if k not in ('memberId', 'pledgeId')}
     if 'amount' in update_fields:
@@ -1756,13 +1968,12 @@ def update_pledge(body):
         if remove_parts:
             clauses.append('REMOVE ' + ', '.join(remove_parts))
         kwargs = {
-            'Key': {'memberId': member_id, 'pledgeId': pledge_id},
             'UpdateExpression': ' '.join(clauses),
             'ExpressionAttributeNames': expr_names,
         }
         if expr_values:
             kwargs['ExpressionAttributeValues'] = expr_values
-        pledges_table.update_item(**kwargs)
+        _pledge_update(member_id, pledge_id, **kwargs)
 
     # Keep the mirrored pledge-charge txn aligned with the pledge.
     # On cancel, drop the charge so balance stops counting it.
@@ -1770,16 +1981,13 @@ def update_pledge(body):
     if 'canceled' in body and body.get('canceled'):
         for t in _all_member_transactions(member_id):
             if t.get('paymentType') == 'pledge-charge' and t.get('pledgeId') == pledge_id:
-                transactions_table.delete_item(Key={
-                    'memberId': t['memberId'],
-                    'transactionId': t['transactionId'],
-                })
+                _txn_delete(t['memberId'], t['transactionId'])
     elif 'amount' in body:
         new_amt = Decimal(str(body['amount']))
         for t in _all_member_transactions(member_id):
             if t.get('paymentType') == 'pledge-charge' and t.get('pledgeId') == pledge_id:
-                transactions_table.update_item(
-                    Key={'memberId': t['memberId'], 'transactionId': t['transactionId']},
+                _txn_update(
+                    t['memberId'], t['transactionId'],
                     UpdateExpression='SET amount = :a',
                     ExpressionAttributeValues={':a': new_amt},
                 )
@@ -1800,8 +2008,7 @@ def pay_pledge(body):
     idempotency_key = body.get('idempotencyKey') or ''
 
     # Get current pledge
-    result = pledges_table.get_item(Key={'memberId': member_id, 'pledgeId': pledge_id})
-    pledge = result.get('Item')
+    pledge = _pledge_get(member_id, pledge_id)
     if not pledge:
         return respond(404, {'error': 'Pledge not found'})
 
@@ -1852,11 +2059,11 @@ def pay_pledge(body):
                 'transaction': existing or txn,
             })
     else:
-        transactions_table.put_item(Item=txn)
+        _txn_put(txn)
 
     # Side effects only run for the winner:
-    pledges_table.update_item(
-        Key={'memberId': member_id, 'pledgeId': pledge_id},
+    _pledge_update(
+        member_id, pledge_id,
         UpdateExpression='SET paidAmount = :paid, paid = :isPaid, paymentMethod = :method',
         ExpressionAttributeValues={
             ':paid': new_paid,
@@ -1878,16 +2085,15 @@ def delete_pledge(body):
 
 def _apply_pledge_payment(member_id, pledge_id, amount, method):
     """Helper to apply a payment to a pledge when creating a transaction."""
-    result = pledges_table.get_item(Key={'memberId': member_id, 'pledgeId': pledge_id})
-    pledge = result.get('Item')
+    pledge = _pledge_get(member_id, pledge_id)
     if not pledge:
         return
 
     new_paid = pledge.get('paidAmount', Decimal('0')) + amount
     is_fully_paid = new_paid >= pledge.get('amount', Decimal('0'))
 
-    pledges_table.update_item(
-        Key={'memberId': member_id, 'pledgeId': pledge_id},
+    _pledge_update(
+        member_id, pledge_id,
         UpdateExpression='SET paidAmount = :paid, paid = :isPaid, paymentMethod = :method',
         ExpressionAttributeValues={
             ':paid': new_paid,
@@ -1980,13 +2186,73 @@ def update_setting(key, body):
 
 
 # ===================== SPONSORSHIPS =====================
+# Phase 1 migration shim — SPONSORSHIPS_TABLE_MODE env var routes reads/writes.
+
+def _sponsorships_get(date_key):
+    tenant_id = _require_tenant()
+    if _should_read_v2('SPONSORSHIPS'):
+        res = sponsorships_table_v2.get_item(Key={'tenantId': tenant_id, 'dateKey': date_key})
+    else:
+        res = sponsorships_table.get_item(Key={'dateKey': date_key})
+    return res.get('Item')
+
+
+def _sponsorships_list_all_for_tenant():
+    tenant_id = _require_tenant()
+    items = []
+    last_key = None
+    while True:
+        kw = {}
+        if last_key:
+            kw['ExclusiveStartKey'] = last_key
+        if _should_read_v2('SPONSORSHIPS'):
+            kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
+            res = sponsorships_table_v2.query(**kw)
+        else:
+            res = sponsorships_table.scan(**kw)
+        items.extend(res.get('Items', []))
+        last_key = res.get('LastEvaluatedKey')
+        if not last_key:
+            break
+    return items
+
+
+def _sponsorships_put(item):
+    tenant_id = _require_tenant()
+    if _should_write_legacy('SPONSORSHIPS'):
+        sponsorships_table.put_item(Item=item)
+    if _should_write_v2('SPONSORSHIPS'):
+        sponsorships_table_v2.put_item(Item={**item, 'tenantId': tenant_id})
+
+
+def _sponsorships_delete(date_key):
+    tenant_id = _require_tenant()
+    if _should_write_legacy('SPONSORSHIPS'):
+        sponsorships_table.delete_item(Key={'dateKey': date_key})
+    if _should_write_v2('SPONSORSHIPS'):
+        sponsorships_table_v2.delete_item(Key={'tenantId': tenant_id, 'dateKey': date_key})
+
+
+def _sponsorships_remove_field(date_key, field):
+    tenant_id = _require_tenant()
+    kwargs = {
+        'UpdateExpression': f'REMOVE #{field}',
+        'ExpressionAttributeNames': {f'#{field}': field},
+    }
+    if _should_write_legacy('SPONSORSHIPS'):
+        try:
+            sponsorships_table.update_item(Key={'dateKey': date_key}, **kwargs)
+        except Exception:
+            pass
+    if _should_write_v2('SPONSORSHIPS'):
+        try:
+            sponsorships_table_v2.update_item(Key={'tenantId': tenant_id, 'dateKey': date_key}, **kwargs)
+        except Exception:
+            pass
+
 
 def get_sponsorships():
-    result = sponsorships_table.scan()
-    items = result['Items']
-    while 'LastEvaluatedKey' in result:
-        result = sponsorships_table.scan(ExclusiveStartKey=result['LastEvaluatedKey'])
-        items.extend(result['Items'])
+    items = _sponsorships_list_all_for_tenant()
     items.sort(key=lambda x: x.get('dateKey', ''))
     return respond(200, items)
 
@@ -2007,10 +2273,10 @@ def update_sponsorship(date_key, body):
         item['blocked'] = body['blocked']
 
     # Merge with existing
-    existing = sponsorships_table.get_item(Key={'dateKey': date_key}).get('Item', {})
+    existing = _sponsorships_get(date_key) or {}
     existing.update(item)
     existing.update(_actor_stamp_modify())
-    sponsorships_table.put_item(Item=existing)
+    _sponsorships_put(existing)
     return respond(200, existing)
 
 
@@ -2033,9 +2299,7 @@ def _delete_sponsorship_txns(existing, field_name, date_key):
 
     if txn_id:
         try:
-            transactions_table.delete_item(Key={
-                'memberId': member_id_str, 'transactionId': txn_id,
-            })
+            _txn_delete(member_id_str, txn_id)
         except Exception as e:
             print(f"[delete-sponsorship] could not delete txn {txn_id}: {e}")
         return
@@ -2044,9 +2308,7 @@ def _delete_sponsorship_txns(existing, field_name, date_key):
         for t in _all_member_transactions(member_id_str):
             if t.get('pairId') == pair_id:
                 try:
-                    transactions_table.delete_item(Key={
-                        'memberId': t['memberId'], 'transactionId': t['transactionId'],
-                    })
+                    _txn_delete(t['memberId'], t['transactionId'])
                 except Exception as e:
                     print(f"[delete-sponsorship] could not delete pair member: {e}")
         return
@@ -2065,9 +2327,7 @@ def _delete_sponsorship_txns(existing, field_name, date_key):
         if date_key not in (t.get('description') or ''):
             continue
         try:
-            transactions_table.delete_item(Key={
-                'memberId': t['memberId'], 'transactionId': t['transactionId'],
-            })
+            _txn_delete(t['memberId'], t['transactionId'])
             print(f"[delete-sponsorship] legacy fallback removed {t['transactionId']}")
         except Exception as e:
             print(f"[delete-sponsorship] legacy fallback failed: {e}")
@@ -2079,39 +2339,57 @@ def delete_sponsorship(date_key, body):
         return _forbid()
     field = body.get('field')  # 'kiddush', 'seuda', or 'blocked'
 
-    existing = sponsorships_table.get_item(Key={'dateKey': date_key}).get('Item') or {}
+    existing = _sponsorships_get(date_key) or {}
 
     if not field:
         # Whole-row delete: clean up txns for both kiddush and seuda first.
         for f in ('kiddush', 'seuda'):
             _delete_sponsorship_txns(existing, f, date_key)
-        sponsorships_table.delete_item(Key={'dateKey': date_key})
+        _sponsorships_delete(date_key)
         return respond(200, {'message': 'Sponsorship deleted'})
 
     if field in ('kiddush', 'seuda'):
         _delete_sponsorship_txns(existing, field, date_key)
 
-    try:
-        sponsorships_table.update_item(
-            Key={'dateKey': date_key},
-            UpdateExpression=f'REMOVE #{field}',
-            ExpressionAttributeNames={f'#{field}': field},
-        )
-    except Exception:
-        pass
+    _sponsorships_remove_field(date_key, field)
     return respond(200, {'message': f'{field} removed'})
 
 
 # ===================== EMAILS =====================
+# Phase 1 migration shim — EMAILS_TABLE_MODE env var routes reads/writes.
+
+def _emails_list_all_for_tenant():
+    tenant_id = _require_tenant()
+    items = []
+    last_key = None
+    while True:
+        kw = {}
+        if last_key:
+            kw['ExclusiveStartKey'] = last_key
+        if _should_read_v2('EMAILS'):
+            kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
+            res = emails_table_v2.query(**kw)
+        else:
+            res = emails_table.scan(**kw)
+        items.extend(res.get('Items', []))
+        last_key = res.get('LastEvaluatedKey')
+        if not last_key:
+            break
+    return items
+
+
+def _emails_put(item):
+    tenant_id = _require_tenant()
+    if _should_write_legacy('EMAILS'):
+        emails_table.put_item(Item=item)
+    if _should_write_v2('EMAILS'):
+        emails_table_v2.put_item(Item={**item, 'tenantId': tenant_id})
+
 
 def get_emails():
     if not _is_admin():
         return _forbid()
-    result = emails_table.scan()
-    items = result['Items']
-    while 'LastEvaluatedKey' in result:
-        result = emails_table.scan(ExclusiveStartKey=result['LastEvaluatedKey'])
-        items.extend(result['Items'])
+    items = _emails_list_all_for_tenant()
     items.sort(key=lambda x: x.get('date', ''), reverse=True)
     return respond(200, items)
 
@@ -2130,7 +2408,7 @@ def create_email(body):
         'memberIds': body.get('memberIds', []),
         **_actor_stamp_create(),
     }
-    emails_table.put_item(Item=item)
+    _emails_put(item)
     return respond(201, item)
 
 
@@ -2379,6 +2657,95 @@ def _sola_post(payload):
     return ok, resp
 
 
+# ===== Payment methods migration shim =====
+# Phase 1 migration shim — PAYMENT_METHODS_TABLE_MODE env var routes reads/writes.
+# v2 schema fixes the long-standing Number-vs-String memberId mismatch by
+# using a synthesised composite `memberIdPaymentMethodId` range key (always
+# String). Legacy key shape is preserved for the legacy branch.
+
+
+def _pm_legacy_key_value(member_id):
+    """Legacy `memberId` PK is Number when the id is numeric, String otherwise.
+    Kept identical to the pre-migration code for safe dual-write."""
+    return int(member_id) if str(member_id).isdigit() else member_id
+
+
+def _pm_v2_range_key(member_id, payment_method_id):
+    return f"{member_id}#{payment_method_id}"
+
+
+def _pm_get(member_id, payment_method_id):
+    tenant_id = _require_tenant()
+    if _should_read_v2('PAYMENT_METHODS'):
+        res = payment_methods_table_v2.get_item(Key={
+            'tenantId': tenant_id,
+            'memberIdPaymentMethodId': _pm_v2_range_key(member_id, payment_method_id),
+        })
+    else:
+        res = payment_methods_table.get_item(Key={
+            'memberId': _pm_legacy_key_value(member_id),
+            'paymentMethodId': payment_method_id,
+        })
+    return res.get('Item')
+
+
+def _pm_list_for_member(member_id):
+    tenant_id = _require_tenant()
+    if _should_read_v2('PAYMENT_METHODS'):
+        res = payment_methods_table_v2.query(
+            KeyConditionExpression=Key('tenantId').eq(tenant_id) & Key('memberIdPaymentMethodId').begins_with(f"{member_id}#"),
+        )
+    else:
+        res = payment_methods_table.query(
+            KeyConditionExpression=Key('memberId').eq(_pm_legacy_key_value(member_id))
+        )
+    return res.get('Items', [])
+
+
+def _pm_put(item):
+    """item carries memberId + paymentMethodId. We write a legacy-shaped row
+    and a v2-shaped row in parallel."""
+    tenant_id = _require_tenant()
+    member_id = str(item.get('memberId', ''))
+    payment_method_id = item.get('paymentMethodId', '')
+    if _should_write_legacy('PAYMENT_METHODS'):
+        payment_methods_table.put_item(Item=item)
+    if _should_write_v2('PAYMENT_METHODS'):
+        v2_item = {**item,
+                   'memberId': member_id,                       # always String in v2
+                   'tenantId': tenant_id,
+                   'memberIdPaymentMethodId': _pm_v2_range_key(member_id, payment_method_id)}
+        payment_methods_table_v2.put_item(Item=v2_item)
+
+
+def _pm_update(member_id, payment_method_id, **kwargs):
+    tenant_id = _require_tenant()
+    if _should_write_legacy('PAYMENT_METHODS'):
+        payment_methods_table.update_item(
+            Key={'memberId': _pm_legacy_key_value(member_id), 'paymentMethodId': payment_method_id},
+            **kwargs,
+        )
+    if _should_write_v2('PAYMENT_METHODS'):
+        payment_methods_table_v2.update_item(
+            Key={'tenantId': tenant_id, 'memberIdPaymentMethodId': _pm_v2_range_key(member_id, payment_method_id)},
+            **kwargs,
+        )
+
+
+def _pm_delete(member_id, payment_method_id):
+    tenant_id = _require_tenant()
+    if _should_write_legacy('PAYMENT_METHODS'):
+        payment_methods_table.delete_item(Key={
+            'memberId': _pm_legacy_key_value(member_id),
+            'paymentMethodId': payment_method_id,
+        })
+    if _should_write_v2('PAYMENT_METHODS'):
+        payment_methods_table_v2.delete_item(Key={
+            'tenantId': tenant_id,
+            'memberIdPaymentMethodId': _pm_v2_range_key(member_id, payment_method_id),
+        })
+
+
 def _detect_brand(masked):
     """Best-effort brand from masked PAN. Sola also returns xCardType but we double-check."""
     if not masked:
@@ -2458,7 +2825,7 @@ def create_payment_method(body):
 
     actor = _actor_stamp_create()
     item = {
-        'memberId': int(member_id) if str(member_id).isdigit() else member_id,
+        'memberId': _pm_legacy_key_value(member_id),
         'paymentMethodId': payment_method_id,
         'xToken': x_token,
         'maskedCardNumber': masked,
@@ -2475,7 +2842,7 @@ def create_payment_method(body):
         **actor,
     }
     item = {k: v for k, v in item.items() if v not in ('', None)}
-    payment_methods_table.put_item(Item=item)
+    _pm_put(item)
 
     return respond(200, {
         'paymentMethodId': payment_method_id,
@@ -2495,11 +2862,7 @@ def list_payment_methods(member_id):
         return respond(400, {'error': 'memberId required'})
     if not (_is_admin() or _is_self(member_id)):
         return _forbid()
-    key_value = int(member_id) if str(member_id).isdigit() else member_id
-    res = payment_methods_table.query(
-        KeyConditionExpression=Key('memberId').eq(key_value)
-    )
-    items = res.get('Items', [])
+    items = _pm_list_for_member(member_id)
     # Strip the actual token from the response — frontend never sees it
     safe = []
     for it in items:
@@ -2526,13 +2889,9 @@ def delete_payment_method(body):
         return respond(400, {'error': 'memberId and paymentMethodId are required'})
     if not (_is_admin() or _is_self(member_id)):
         return _forbid()
-    key_value = int(member_id) if str(member_id).isdigit() else member_id
 
     # Look up the card so we can write an audit row before erasing it.
-    pm = payment_methods_table.get_item(Key={
-        'memberId': key_value,
-        'paymentMethodId': payment_method_id,
-    }).get('Item') or {}
+    pm = _pm_get(member_id, payment_method_id) or {}
 
     # Audit log: a 'card-deleted' txn with no balance impact, stamped with
     # the actor and a snapshot of the (non-sensitive) card metadata. The
@@ -2555,24 +2914,19 @@ def delete_payment_method(body):
     }
     audit_txn = {k: v for k, v in audit_txn.items() if v not in ('', None)}
     try:
-        transactions_table.put_item(Item=audit_txn)
+        _txn_put(audit_txn)
     except Exception as e:
         print(f"[card-delete] audit log failed: {e}")
 
-    payment_methods_table.delete_item(Key={
-        'memberId': key_value,
-        'paymentMethodId': payment_method_id,
-    })
+    _pm_delete(member_id, payment_method_id)
     return respond(200, {'message': 'Payment method removed'})
 
 
 def _clear_default_payment_methods(member_id):
-    key_value = int(member_id) if str(member_id).isdigit() else member_id
-    res = payment_methods_table.query(KeyConditionExpression=Key('memberId').eq(key_value))
-    for it in res.get('Items', []):
+    for it in _pm_list_for_member(member_id):
         if it.get('isDefault'):
-            payment_methods_table.update_item(
-                Key={'memberId': key_value, 'paymentMethodId': it['paymentMethodId']},
+            _pm_update(
+                member_id, it['paymentMethodId'],
                 UpdateExpression='SET isDefault = :f',
                 ExpressionAttributeValues={':f': False},
             )
@@ -2665,9 +3019,7 @@ def charge_saved_card(body):
     pm = None  # filled in mode A
     if payment_method_id:
         # ---------- Mode A: saved card ----------
-        pm = payment_methods_table.get_item(Key={
-            'memberId': key_value, 'paymentMethodId': payment_method_id,
-        }).get('Item')
+        pm = _pm_get(member_id, payment_method_id)
         if not pm:
             return respond(404, {'error': 'Payment method not found for this member'})
         sola_payload['xToken'] = pm['xToken']
@@ -2698,7 +3050,7 @@ def charge_saved_card(body):
         if x_token:
             saved_payment_method_id = f"pm_{uuid.uuid4().hex[:12]}"
             item = {
-                'memberId': key_value,
+                'memberId': _pm_legacy_key_value(member_id),
                 'paymentMethodId': saved_payment_method_id,
                 'xToken': x_token,
                 'maskedCardNumber': masked,
@@ -2713,7 +3065,7 @@ def charge_saved_card(body):
             }
             item = {k: v for k, v in item.items() if v not in ('', None)}
             try:
-                payment_methods_table.put_item(Item=item)
+                _pm_put(item)
             except Exception as e:
                 print(f"[charge] failed to persist new payment method: {e}")
                 saved_payment_method_id = None
@@ -2763,7 +3115,7 @@ def charge_saved_card(body):
         }
         txn_record = {k: v for k, v in txn_record.items() if v not in ('', None)}
         try:
-            transactions_table.put_item(Item=txn_record)
+            _txn_put(txn_record)
         except Exception as e:
             print(f"[charge] failed to record txn: {e}")
 
