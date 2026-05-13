@@ -422,9 +422,13 @@ def compute_account_balance(member_id):
     Account Balance = (sum of payment txns) - (sum of charge txns).
     Pledges contribute through their charge txn (paymentType='pledge-charge'),
     not through pledges_table — that's just the per-pledge tracking record.
+    Canceled transactions are excluded so the member's balance reflects the
+    cancellation immediately.
     """
     total = Decimal('0')
     for t in _all_member_transactions(member_id):
+        if t.get('canceled'):
+            continue
         ptype = t.get('paymentType', '')
         amt = Decimal(str(t.get('amount', 0)))
         if ptype in CHARGE_PAYMENT_TYPES:
@@ -614,6 +618,8 @@ def lambda_handler(event, context):
             return charge_membership_fee(parse_body(event))
         if path == '/transactions' and method == 'POST':
             return create_transaction(parse_body(event))
+        if path == '/transactions/cancel' and method == 'POST':
+            return cancel_transaction(parse_body(event))
         if path.startswith('/transactions/') and method == 'PUT':
             return update_transaction(parse_body(event))
         if path.startswith('/transactions/') and method == 'DELETE':
@@ -1452,12 +1458,55 @@ def update_transaction(body):
 
 
 def delete_transaction(body):
+    # Deletions are disabled platform-wide. Admins cancel instead so a reason
+    # and audit trail are preserved.
+    return respond(403, {'error': 'Deletions are disabled. Cancel the transaction instead.'})
+
+
+def cancel_transaction(body):
+    """Soft-cancel a transaction (e.g. a sponsorship fee). The row stays in
+    DynamoDB so admins can review it; the user no longer sees it and the
+    balance recomputes ignoring canceled rows."""
     if not _is_admin():
         return _forbid()
     member_id = body['memberId']
     txn_id = body['transactionId']
-    transactions_table.delete_item(Key={'memberId': member_id, 'transactionId': txn_id})
-    return respond(200, {'message': 'Transaction deleted'})
+    reason = (body.get('cancellationReason') or '').strip()
+    if not reason:
+        return respond(400, {'error': 'cancellationReason is required'})
+    actor = _get_actor()
+    now = _now_iso()
+    transactions_table.update_item(
+        Key={'memberId': member_id, 'transactionId': txn_id},
+        UpdateExpression=(
+            'SET #canceled = :c, #reason = :r, '
+            '#canceledBy = :cb, #canceledByRole = :cr, '
+            '#canceledByMemberId = :cm, #canceledAt = :ca, '
+            '#modifiedBy = :cb, #modifiedByRole = :cr, '
+            '#modifiedByMemberId = :cm, #modifiedAt = :ca'
+        ),
+        ExpressionAttributeNames={
+            '#canceled': 'canceled',
+            '#reason': 'cancellationReason',
+            '#canceledBy': 'canceledBy',
+            '#canceledByRole': 'canceledByRole',
+            '#canceledByMemberId': 'canceledByMemberId',
+            '#canceledAt': 'canceledAt',
+            '#modifiedBy': 'modifiedBy',
+            '#modifiedByRole': 'modifiedByRole',
+            '#modifiedByMemberId': 'modifiedByMemberId',
+            '#modifiedAt': 'modifiedAt',
+        },
+        ExpressionAttributeValues={
+            ':c': True,
+            ':r': reason,
+            ':cb': actor['email'] or 'unknown',
+            ':cr': actor['role'] or '',
+            ':cm': actor['memberId'] or '',
+            ':ca': now,
+        },
+    )
+    return respond(200, {'message': 'Transaction canceled'})
 
 
 # ===================== PLEDGES =====================
@@ -1494,6 +1543,7 @@ def create_pledge(body):
 
     actor_stamp = _actor_stamp_create()
     alias = body.get('alias', '')
+    notes = (body.get('notes') or '').strip()
     item = {
         'memberId': member_id,
         'pledgeId': pledge_id,
@@ -1511,6 +1561,8 @@ def create_pledge(body):
     }
     if alias:
         item['alias'] = alias
+    if notes:
+        item['notes'] = notes
 
     pledges_table.put_item(Item=item)
 
@@ -1551,15 +1603,36 @@ def update_pledge(body):
     if 'paidAmount' in update_fields:
         update_fields['paidAmount'] = Decimal(str(update_fields['paidAmount']))
 
+    # When a pledge is being canceled for the first time, stamp who/when so the
+    # admin-only cancellation reason has an actor + timestamp attached.
+    if body.get('canceled') is True and not existing.get('canceled'):
+        actor = _get_actor()
+        update_fields.setdefault('canceledBy', actor['email'] or 'unknown')
+        update_fields.setdefault('canceledByRole', actor['role'] or '')
+        update_fields.setdefault('canceledByMemberId', actor['memberId'] or '')
+        update_fields.setdefault('canceledAt', _now_iso())
+
+    # Fields that an admin is allowed to explicitly clear by sending an empty
+    # string — these get REMOVEd from the item instead of being silently kept.
+    CLEARABLE_FIELDS = {'notes'}
+
     expr_parts = []
+    remove_parts = []
     expr_values = {}
     expr_names = {}
     for key, value in update_fields.items():
-        # Skip empty values that would overwrite existing data
-        if value == '' and existing.get(key, '') != '':
-            continue
         if value is None:
             continue
+        if isinstance(value, str) and value.strip() == '':
+            if key in CLEARABLE_FIELDS:
+                if existing.get(key):
+                    safe_key = f"#{key}"
+                    expr_names[safe_key] = key
+                    remove_parts.append(safe_key)
+                continue
+            # Non-clearable field: skip empty so we don't overwrite existing data.
+            if existing.get(key, '') != '':
+                continue
         safe_key = f"#{key}"
         expr_names[safe_key] = key
         expr_parts.append(f"{safe_key} = :{key}")
@@ -1572,13 +1645,20 @@ def update_pledge(body):
         expr_parts.append(f"{safe_key} = :{k}")
         expr_values[f":{k}"] = v
 
-    if expr_parts:
-        pledges_table.update_item(
-            Key={'memberId': member_id, 'pledgeId': pledge_id},
-            UpdateExpression='SET ' + ', '.join(expr_parts),
-            ExpressionAttributeNames=expr_names,
-            ExpressionAttributeValues=expr_values,
-        )
+    if expr_parts or remove_parts:
+        clauses = []
+        if expr_parts:
+            clauses.append('SET ' + ', '.join(expr_parts))
+        if remove_parts:
+            clauses.append('REMOVE ' + ', '.join(remove_parts))
+        kwargs = {
+            'Key': {'memberId': member_id, 'pledgeId': pledge_id},
+            'UpdateExpression': ' '.join(clauses),
+            'ExpressionAttributeNames': expr_names,
+        }
+        if expr_values:
+            kwargs['ExpressionAttributeValues'] = expr_values
+        pledges_table.update_item(**kwargs)
 
     # Keep the mirrored pledge-charge txn aligned with the pledge.
     # On cancel, drop the charge so balance stops counting it.
@@ -1687,19 +1767,9 @@ def pay_pledge(body):
 
 
 def delete_pledge(body):
-    if not _is_admin():
-        return _forbid()
-    member_id = body['memberId']
-    pledge_id = body['pledgeId']
-    pledges_table.delete_item(Key={'memberId': member_id, 'pledgeId': pledge_id})
-    # Drop the matching pledge-charge txn so the balance recovers.
-    for t in _all_member_transactions(member_id):
-        if t.get('paymentType') == 'pledge-charge' and t.get('pledgeId') == pledge_id:
-            transactions_table.delete_item(Key={
-                'memberId': t['memberId'],
-                'transactionId': t['transactionId'],
-            })
-    return respond(200, {'message': 'Pledge deleted'})
+    # Deletions are disabled platform-wide. Admins cancel pledges with a
+    # required reason instead so the record + audit trail are preserved.
+    return respond(403, {'error': 'Deletions are disabled. Cancel the pledge instead.'})
 
 
 def _apply_pledge_payment(member_id, pledge_id, amount, method):
@@ -2408,6 +2478,10 @@ def charge_saved_card(body):
     product_id = body.get('productId') or ''
     alias = body.get('alias') or ''
     group_id = body.get('groupId') or ''
+    # `settlesTxnId` lets an admin pay an outstanding fee row (e.g. sponsorship-fee)
+    # by card — the resulting payment row points back at the fee so the
+    # settled-fee matcher in AdminPledges sees it as paid.
+    settles_txn_id = body.get('settlesTxnId') or ''
 
     # Common validation
     if not member_id or amount is None:
@@ -2519,6 +2593,7 @@ def charge_saved_card(body):
             'productId': product_id,
             'alias': alias,
             'groupId': group_id,
+            'settlesTxnId': settles_txn_id,
             'paymentMethodId': payment_method_id or saved_payment_method_id or '',
             'cardLast4': last4_for_record,
             'cardBrand': brand_for_record,
@@ -2536,6 +2611,15 @@ def charge_saved_card(body):
             transactions_table.put_item(Item=txn_record)
         except Exception as e:
             print(f"[charge] failed to record txn: {e}")
+
+        # When this charge is a pledge payment linked to a specific pledge,
+        # mirror the create_transaction flow so the pledge row's paidAmount
+        # increments (and `paid` flips when fully covered).
+        if ok and pledge_id and payment_type == 'pledge':
+            try:
+                _apply_pledge_payment(str(member_id), pledge_id, Decimal(str(round(amount, 2))), 'card')
+            except Exception as e:
+                print(f"[charge] failed to apply pledge payment: {e}")
 
     if not ok:
         decline_payload = {
