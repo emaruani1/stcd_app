@@ -115,6 +115,37 @@ export function cancelKind(t) {
   return 'canceled'
 }
 
+
+/**
+ * Translate a gateway error / decline into a plain-English explanation so
+ * an admin (or member) reading the ledger doesn't have to decode error
+ * codes. Returns empty string when there's no error or no friendly mapping
+ * exists for the message — the caller should fall back to showing the raw
+ * gatewayError. Designed to grow as we encounter more common codes.
+ */
+export function gatewayFriendlyReason(t) {
+  if (!t) return ''
+  const msg = (t.gatewayError || '').toLowerCase()
+  const code = String(t.gatewayErrorCode || '')
+  if (!msg && !code) return ''
+  if (msg.includes('duplicate') || code === '01332') {
+    return 'Card processor flagged this as a duplicate of an earlier charge with the same card and amount — no money moved on this attempt. The first charge is the real one.'
+  }
+  if (msg.includes('insufficient') || code === '51') {
+    return 'Card declined for insufficient funds.'
+  }
+  if (msg.includes('expired')) {
+    return 'Card on file is expired.'
+  }
+  if (msg.includes('invalid card') || msg.includes('invalid account')) {
+    return 'Card number was rejected as invalid.'
+  }
+  if (msg.includes('do not honor') || code === '05') {
+    return 'Issuing bank declined the charge (generic "do not honor" — the bank did not give a specific reason).'
+  }
+  return ''
+}
+
 /**
  * Format an audit attribution sub-line, e.g. "Logged May 7, 2026 2:34 PM · Eli Maruani (pledger)".
  * Prefers createdByName (resolved from the email -> member map in App.jsx).

@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import * as api from '../../api'
 import MemberSearchSelect from '../../components/MemberSearchSelect'
-import { byNewest } from '../../ledger'
+import { byNewest, gatewayFriendlyReason } from '../../ledger'
 
 export default function AdminTransactions({
   allMembers, setAllMembers,
@@ -383,11 +383,21 @@ export default function AdminTransactions({
                       <td data-col="date">{formatDate(t.date)}</td>
                       <td data-col="description">
                         {t.description}
-                        {(t.gatewayError || t.gatewayErrorCode) && (
-                          <div style={{ fontSize: '0.72rem', color: '#991b1b', marginTop: 2 }}>
-                            {t.gatewayError}{t.gatewayErrorCode ? ` (${t.gatewayErrorCode})` : ''}
-                          </div>
-                        )}
+                        {(t.gatewayError || t.gatewayErrorCode) && (() => {
+                          const friendly = gatewayFriendlyReason(t)
+                          return (
+                            <>
+                              <div style={{ fontSize: '0.72rem', color: '#991b1b', marginTop: 2, fontWeight: 600 }}>
+                                {t.gatewayError}{t.gatewayErrorCode ? ` (${t.gatewayErrorCode})` : ''}
+                              </div>
+                              {friendly && (
+                                <div style={{ fontSize: '0.72rem', color: '#7c2d12', marginTop: 2, fontStyle: 'italic' }}>
+                                  {friendly}
+                                </div>
+                              )}
+                            </>
+                          )
+                        })()}
                         {/* Audit line on EVERY row. Falls back to txn date + a
                             "(actor not recorded)" marker for legacy rows so we
                             can see which transactions are missing the stamp. */}

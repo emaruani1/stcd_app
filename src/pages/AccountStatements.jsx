@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
-import { withRunningBalance, neutralReason, paymentTypeLabel, formatAttribution, cancelKind } from '../ledger'
+import { withRunningBalance, neutralReason, paymentTypeLabel, formatAttribution, cancelKind, gatewayFriendlyReason } from '../ledger'
 
 export default function AccountStatements({
   allMembers,
@@ -497,7 +497,12 @@ export default function AccountStatements({
                         {isCanceled && (
                           <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '2px', fontWeight: 600 }}>
                             {kind === 'declined' ? 'Declined by card processor' : 'Canceled'}
-                            {t.cancellationReason ? ` — ${t.cancellationReason}` : ''}
+                            {(() => {
+                              const friendly = gatewayFriendlyReason(t)
+                              if (friendly) return ` — ${friendly}`
+                              if (t.cancellationReason) return ` — ${t.cancellationReason}`
+                              return ''
+                            })()}
                           </div>
                         )}
                         {noteText && (

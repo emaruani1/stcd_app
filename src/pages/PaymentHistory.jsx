@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { withRunningBalance, balanceImpact, neutralReason, paymentTypeLabel, formatAttribution, cancelKind, byNewest } from '../ledger'
+import { withRunningBalance, balanceImpact, neutralReason, paymentTypeLabel, formatAttribution, cancelKind, byNewest, gatewayFriendlyReason } from '../ledger'
 
 // eslint-disable-next-line no-unused-vars
 export default function PaymentHistory({ currentMember, pledgePayments, extraPayments, adminTransactions }) {
@@ -257,7 +257,12 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                           {isCanceled && (
                             <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '2px', fontWeight: 600 }}>
                               {kind === 'declined' ? 'Declined by card processor' : 'Canceled'}
-                              {p.cancellationReason ? ` — ${p.cancellationReason}` : ''}
+                              {(() => {
+                                const friendly = gatewayFriendlyReason(p)
+                                if (friendly) return ` — ${friendly}`
+                                if (p.cancellationReason) return ` — ${p.cancellationReason}`
+                                return ''
+                              })()}
                             </div>
                           )}
                           {noteText && (
@@ -346,7 +351,12 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                           {isCanceled && (
                             <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '2px', fontWeight: 600 }}>
                               {kind === 'declined' ? 'Declined by card processor' : 'Canceled'}
-                              {e.cancellationReason ? ` — ${e.cancellationReason}` : ''}
+                              {(() => {
+                                const friendly = gatewayFriendlyReason(e)
+                                if (friendly) return ` — ${friendly}`
+                                if (e.cancellationReason) return ` — ${e.cancellationReason}`
+                                return ''
+                              })()}
                             </div>
                           )}
                           {noteText && (
