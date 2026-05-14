@@ -9,7 +9,7 @@ const FALLBACK_PLANS = [
   { id: 'family', label: 'Family', price: 180, description: 'Family' },
 ]
 
-export default function MakePayment({ currentMember, pledgePayments, setPledgePayments, extraPayments, setExtraPayments, currentBalance, setMemberBalances, currentMemberId, refreshData, membershipPlans }) {
+export default function MakePayment({ currentMember, pledgePayments, setPledgePayments, extraPayments, setExtraPayments, currentBalance, setMemberBalances, currentMemberId, refreshData, membershipPlans, paymentConfig }) {
   const plansToShow = (membershipPlans && membershipPlans.length > 0) ? membershipPlans : FALLBACK_PLANS
   const [searchParams] = useSearchParams()
   const showJoin = searchParams.get('join') === 'true'
@@ -212,10 +212,11 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
     let gw = {}
     if (cardPortion > 0) {
       try {
+        const orgName = paymentConfig?.displayName || 'Portal'
         const summary =
           payingType === 'deposit' ? 'Account deposit'
-          : payingType === 'pledges' ? `STCD payment (${selectedPledges.length} pledge${selectedPledges.length !== 1 ? 's' : ''}${extraDonation > 0 ? ' + donation' : ''})`
-          : 'STCD donation'
+          : payingType === 'pledges' ? `${orgName} payment (${selectedPledges.length} pledge${selectedPledges.length !== 1 ? 's' : ''}${extraDonation > 0 ? ' + donation' : ''})`
+          : `${orgName} donation`
         const res = await chooserRef.current.charge({
           amount: cardPortion,
           paymentType: payingType === 'deposit' ? 'membership' : payingType === 'pledges' ? 'pledge' : 'donation',
@@ -757,6 +758,7 @@ export default function MakePayment({ currentMember, pledgePayments, setPledgePa
                     ref={chooserRef}
                     memberId={String(currentMemberId)}
                     amount={cardPortion}
+                    paymentConfig={paymentConfig}
                   />
                 </div>
               )}

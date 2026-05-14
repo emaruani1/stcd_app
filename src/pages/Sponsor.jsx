@@ -3,7 +3,7 @@ import { sponsorshipCalendar } from '../data/fakeData'
 import * as api from '../api'
 import PaymentChooser from '../components/PaymentChooser'
 
-export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPayments, setExtraPayments, blockedDatesState = [], currentBalance, setMemberBalances, currentMember, currentMemberId, kiddushPricing, seudaPricing, refreshData }) {
+export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPayments, setExtraPayments, blockedDatesState = [], currentBalance, setMemberBalances, currentMember, currentMemberId, kiddushPricing, seudaPricing, refreshData, paymentConfig }) {
   const memberAliases = currentMember?.aliases || []
   const [selectedAlias, setSelectedAlias] = useState('')
   const kiddushOptions = kiddushPricing || []
@@ -516,6 +516,7 @@ export default function Sponsor({ bookedSponsors, setBookedSponsors, extraPaymen
                     ref={chooserRef}
                     memberId={String(currentMemberId)}
                     amount={cardPortion}
+                    paymentConfig={paymentConfig}
                   />
                 </div>
               )}

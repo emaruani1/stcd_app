@@ -4,14 +4,13 @@ import MemberSearchSelect from '../../components/MemberSearchSelect'
 import IFieldsCardForm from '../../components/IFieldsCardForm'
 import { byNewest } from '../../ledger'
 
-const IFIELDS_KEY = import.meta.env.VITE_SOLA_IFIELDS_KEY || ''
-
 export default function AdminPledges({
   allMembers, setAllMembers,
   pledgeTypes, occasions, paymentMethods,
   products,
   adminTransactions, setAdminTransactions,
   refreshData,
+  paymentConfig,
 }) {
   const [memberFilter, setMemberFilter] = useState('all')
   const [aliasFilter, setAliasFilter] = useState('all')
@@ -1196,8 +1195,8 @@ export default function AdminPledges({
                         Save this card on file for future charges
                       </label>
                       <IFieldsCardForm
-                        iFieldsKey={IFIELDS_KEY}
-                        softwareName="STCD-App"
+                        iFieldsKey={paymentConfig?.iFieldsKey || ''}
+                        softwareName={paymentConfig?.softwareName || 'Member-Portal'}
                         softwareVersion="1.0.0"
                         onTokens={handleChargeNewCard}
                         onError={setChargeError}

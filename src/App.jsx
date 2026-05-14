@@ -62,6 +62,14 @@ function App() {
   const [templates, setTemplates] = useState({})
   const [bookedSponsors, setBookedSponsors] = useState({})
   const [memberBalances, setMemberBalances] = useState({})
+  // Per-tenant Sola iFields key + display name, fetched once at login.
+  // NEVER contains the xKey — that stays Lambda-side. Default values let
+  // pre-fetch renders not crash, but real charges block until populated.
+  const [paymentConfig, setPaymentConfig] = useState({
+    iFieldsKey: '',
+    softwareName: 'Member-Portal',
+    displayName: 'Member Portal',
+  })
 
   // Admin impersonation
   const [impersonateId, setImpersonateId] = useState(null)
@@ -296,6 +304,26 @@ function App() {
     if (session) refreshData()
   }, [session, refreshData])
 
+  // Fetch the tenant's Sola iFields key + display name once on auth so charge
+  // surfaces don't fall back to the env-var-baked single-tenant key. The
+  // payment-config endpoint is cheap (one stcd_tenants row lookup) — fetch
+  // once per session, not on every refresh.
+  useEffect(() => {
+    if (!session) return
+    let cancelled = false
+    api.fetchPaymentConfig()
+      .then(cfg => {
+        if (cancelled) return
+        setPaymentConfig({
+          iFieldsKey: cfg.iFieldsKey || '',
+          softwareName: cfg.softwareName || 'Member-Portal',
+          displayName: cfg.displayName || 'Member Portal',
+        })
+      })
+      .catch(err => console.error('Failed to fetch payment config:', err))
+    return () => { cancelled = true }
+  }, [session])
+
   const handleLogin = (sessionData) => {
     setSession(sessionData)
   }
@@ -518,6 +546,7 @@ function App() {
                 adminTransactions={adminTransactions}
                 setAdminTransactions={() => {}}
                 refreshData={refreshData}
+                paymentConfig={paymentConfig}
               />
             }
           />
@@ -725,6 +754,7 @@ function App() {
               currentMemberId={currentMemberId}
               refreshData={refreshData}
               membershipPlans={membershipPlans}
+              paymentConfig={paymentConfig}
             />
           }
         />
@@ -744,12 +774,13 @@ function App() {
               kiddushPricing={kiddushPricing}
               seudaPricing={seudaPricing}
               refreshData={refreshData}
+              paymentConfig={paymentConfig}
             />
           }
         />
         <Route
           path="/cards"
-          element={<SavedCards currentMember={currentMember} />}
+          element={<SavedCards currentMember={currentMember} paymentConfig={paymentConfig} />}
         />
         <Route
           path="/profile"

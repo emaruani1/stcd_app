@@ -765,6 +765,15 @@ def lambda_handler(event, context):
         if path == '/charge' and method == 'POST':
             return charge_saved_card(parse_body(event))
 
+        # ===== TENANT — payment bootstrap =====
+        # Returns the public iFields key + software name + display name so the
+        # frontend can mount the Sola iFrame and label charge descriptions
+        # without reading the env-var-based VITE_SOLA_IFIELDS_KEY (which is
+        # tenant-incorrect once we onboard a second synagogue). NEVER returns
+        # xKey — that stays server-side.
+        if path == '/tenants/me/payment-config' and method == 'GET':
+            return get_tenant_payment_config()
+
         # ===== COGNITO USER MANAGEMENT =====
         if path == '/users/lookup' and method == 'POST':
             return cognito_lookup_user(parse_body(event))
@@ -1489,11 +1498,13 @@ def charge_membership_fee(body):
 
     # Sola charge.
     plan_label = f"{member.get('membershipType', '').capitalize()} {member.get('membershipPlan', '').capitalize()}".strip()
+    tenant = _load_tenant(_require_tenant()) or {}
+    tenant_name = tenant.get('displayName') or tenant.get('legalName') or 'Membership'
     sola_payload = {
         'xCommand': 'cc:sale',
         'xAmount': f"{float(amount):.2f}",
         'xToken': pm['xToken'],
-        'xDescription': f"STCD monthly membership ({plan_label})",
+        'xDescription': f"{tenant_name} monthly membership ({plan_label})",
         'xInvoice': fee_txn_id,
     }
     ok, resp = _sola_post(sola_payload)
@@ -2764,22 +2775,50 @@ def cognito_update_role(body):
 # We never store CVV or full card number. Sola is the vault for the card data;
 # our DynamoDB is the index that maps members -> their saved tokens.
 
+def get_tenant_payment_config():
+    """Public-to-the-tenant bootstrap data for the Sola iFrame + receipts.
+    Available to any authenticated user in the tenant. NEVER includes xKey
+    or any private credential."""
+    tenant_id = _require_tenant()
+    tenant = _load_tenant(tenant_id) or {}
+    return respond(200, {
+        'tenantId': tenant_id,
+        'iFieldsKey': tenant.get('solaIFieldsKey', '') or '',
+        'softwareName': tenant.get('solaSoftwareName', '') or SOLA_SOFTWARE_NAME,
+        'softwareVersion': tenant.get('solaSoftwareVersion', '') or SOLA_SOFTWARE_VERSION,
+        'displayName': tenant.get('displayName', '') or 'Member Portal',
+    })
+
+
 def _sola_post(payload):
-    """POST to the Sola Transaction API. Returns (ok, response_dict)."""
-    if not SOLA_X_KEY:
-        return False, {'xResult': 'E', 'xError': 'SOLA_X_KEY is not configured', 'xErrorCode': 'CONFIG'}
+    """POST to the Sola Transaction API using the current tenant's credentials.
+    Returns (ok, response_dict).
+
+    Each tenant brings their own Sola merchant account, so xKey, gateway URL,
+    and softwareName/Version are resolved from the `stcd_tenants` row (with
+    Lambda-env defaults retained as last-resort fallbacks for solaGatewayUrl,
+    softwareName, softwareVersion only — never for xKey, which MUST come from
+    the tenant row or the call fails closed)."""
+    tenant_id = _require_tenant()
+    tenant = _load_tenant(tenant_id) or {}
+    x_key = (tenant.get('solaXKey') or '').strip()
+    if not x_key:
+        return False, {'xResult': 'E', 'xError': f'Tenant {tenant_id} has no Sola xKey configured', 'xErrorCode': 'CONFIG'}
+    gateway_url = (tenant.get('solaGatewayUrl') or '').strip() or SOLA_GATEWAY_URL
+    software_name = (tenant.get('solaSoftwareName') or '').strip() or SOLA_SOFTWARE_NAME
+    software_version = (tenant.get('solaSoftwareVersion') or '').strip() or SOLA_SOFTWARE_VERSION
 
     body = {
-        'xKey': SOLA_X_KEY,
+        'xKey': x_key,
         'xVersion': SOLA_API_VERSION,
-        'xSoftwareName': SOLA_SOFTWARE_NAME,
-        'xSoftwareVersion': SOLA_SOFTWARE_VERSION,
+        'xSoftwareName': software_name,
+        'xSoftwareVersion': software_version,
     }
     body.update(payload)
 
     data = json.dumps(body).encode('utf-8')
     req = urllib.request.Request(
-        SOLA_GATEWAY_URL,
+        gateway_url,
         data=data,
         headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
         method='POST',

@@ -2,8 +2,6 @@ import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 're
 import IFieldsCardForm from './IFieldsCardForm'
 import * as api from '../api'
 
-const IFIELDS_KEY = import.meta.env.VITE_SOLA_IFIELDS_KEY || ''
-
 const brandLogo = (brand = '') => {
   const b = brand.toLowerCase()
   if (b.includes('visa')) return 'Visa'
@@ -35,7 +33,7 @@ const brandLogo = (brand = '') => {
  *     -> rejects with Error on decline/error.
  */
 const PaymentChooser = forwardRef(function PaymentChooser(
-  { memberId, amount = 0 },
+  { memberId, amount = 0, paymentConfig },
   ref
 ) {
   const [cards, setCards] = useState([])
@@ -257,8 +255,8 @@ const PaymentChooser = forwardRef(function PaymentChooser(
               style={{ display: 'contents' }}
             >
               <IFieldsCardForm
-                iFieldsKey={IFIELDS_KEY}
-                softwareName="STCD-App"
+                iFieldsKey={paymentConfig?.iFieldsKey || ''}
+                softwareName={paymentConfig?.softwareName || 'Member-Portal'}
                 softwareVersion="1.0.0"
                 onTokens={handleNewCardTokens}
                 onError={setError}

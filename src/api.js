@@ -102,6 +102,11 @@ export const deletePaymentMethod = (data) =>
 export const chargeSavedCard = (data) =>
   request('/charge', { method: 'POST', body: JSON.stringify(data) })
 
+// ===== TENANT =====
+// Public-per-tenant payment bootstrap. Returns { tenantId, iFieldsKey,
+// softwareName, softwareVersion, displayName }. NEVER returns xKey.
+export const fetchPaymentConfig = () => request('/tenants/me/payment-config')
+
 // ===== BILLING =====
 // Per-member, called in a loop by the admin Membership Billing page.
 export const chargeMembershipFee = (data) =>
