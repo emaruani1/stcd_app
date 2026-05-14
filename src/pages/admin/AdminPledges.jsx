@@ -373,6 +373,8 @@ export default function AdminPledges({
       if (refreshData) refreshData()
     } catch (e) {
       setChargeError(e.message || 'Charge failed')
+      // Backend still records the declined txn — pull it in so the admin can see it.
+      if (refreshData) refreshData()
     } finally {
       setCharging(false)
     }
@@ -407,6 +409,8 @@ export default function AdminPledges({
       if (refreshData) refreshData()
     } catch (e) {
       setChargeError(e.message || 'Charge failed')
+      // Backend still records the declined txn — pull it in so the admin can see it.
+      if (refreshData) refreshData()
     } finally {
       setCharging(false)
     }

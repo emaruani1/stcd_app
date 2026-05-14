@@ -3158,6 +3158,18 @@ def charge_saved_card(body):
             'idempotencyKey': idempotency_key,
             **_actor_stamp_create(),
         }
+        # On decline/gateway error: mark the row canceled so it stays visible
+        # in the ledger as an audit trail but doesn't contribute to the member's
+        # account balance or any linked pledge's paidAmount.
+        if not ok:
+            actor = _get_actor()
+            now = _now_iso()
+            txn_record['canceled'] = True
+            txn_record['cancellationReason'] = f"Declined: {resp.get('xError') or 'Charge declined'}"
+            txn_record['canceledBy'] = actor['email'] or 'system'
+            txn_record['canceledByRole'] = actor['role'] or 'system'
+            txn_record['canceledByMemberId'] = actor['memberId'] or ''
+            txn_record['canceledAt'] = now
         txn_record = {k: v for k, v in txn_record.items() if v not in ('', None)}
         try:
             _txn_put(txn_record)
