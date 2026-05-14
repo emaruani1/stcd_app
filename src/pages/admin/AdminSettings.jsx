@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import * as api from '../../api'
+import { useTenant } from '../../TenantContext'
 
 export default function AdminSettings({
   pledgeTypes, setPledgeTypes,
@@ -9,6 +11,46 @@ export default function AdminSettings({
   seudaPricing, setSeudaPricing,
   membershipPlans, setMembershipPlans,
 }) {
+  const { tenant, setTenantLocal, refreshTenant } = useTenant()
+  const [brandingDraft, setBrandingDraft] = useState(null)
+  const [savingBranding, setSavingBranding] = useState(false)
+
+  // Lazy-init the draft when the user enters the branding tab so edits don't
+  // start with the fallback values from a pre-fetch render.
+  const ensureBrandingDraft = () => {
+    if (!brandingDraft) {
+      setBrandingDraft({
+        displayName: tenant.displayName || '',
+        legalName: tenant.legalName || '',
+        primaryColor: tenant.primaryColor || '#1a365d',
+        secondaryColor: tenant.secondaryColor || '#2a4a7f',
+        accentColor: tenant.accentColor || '#c6973f',
+        fromEmail: tenant.fromEmail || '',
+        replyToEmail: tenant.replyToEmail || '',
+        emailFooterSignature: tenant.emailFooterSignature || '',
+        address: tenant.address || '',
+        taxId: tenant.taxId || '',
+      })
+    }
+  }
+
+  const saveBranding = async () => {
+    if (!brandingDraft) return
+    setSavingBranding(true)
+    try {
+      const updated = await api.updateTenant(brandingDraft)
+      setTenantLocal(updated)
+      // Re-apply CSS vars + title immediately so the admin sees the change
+      // without a refresh.
+      await refreshTenant()
+      showToast('Branding saved')
+      setBrandingDraft(null)
+    } catch (e) {
+      showToast('Error: ' + e.message)
+    } finally {
+      setSavingBranding(false)
+    }
+  }
   const [activeTab, setActiveTab] = useState('pledgeTypes')
   const [toast, setToast] = useState('')
 
@@ -42,6 +84,7 @@ export default function AdminSettings({
     { key: 'products', label: 'Products' },
     { key: 'sponsorship', label: 'Sponsorship Pricing' },
     { key: 'membership', label: 'Membership Plans' },
+    { key: 'branding', label: 'Branding' },
   ]
 
   // ===== PLEDGE TYPES =====
@@ -614,6 +657,88 @@ export default function AdminSettings({
           </div>
         </div>
       )}
+
+      {/* ===== BRANDING TAB ===== */}
+      {activeTab === 'branding' && (() => {
+        ensureBrandingDraft()
+        const d = brandingDraft || {}
+        const setField = (k, v) => setBrandingDraft(prev => ({ ...(prev || {}), [k]: v }))
+        return (
+          <div className="dashboard-section">
+            <h2 className="section-title">Synagogue identity</h2>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+              Shown in the portal header, on printed statements, and on
+              cardholder bank-statement descriptions.
+            </p>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Display name</label>
+                <input type="text" value={d.displayName || ''} onChange={e => setField('displayName', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>Legal name</label>
+                <input type="text" value={d.legalName || ''} onChange={e => setField('legalName', e.target.value)} />
+              </div>
+            </div>
+
+            <h2 className="section-title" style={{ marginTop: '2rem' }}>Theme colors</h2>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Primary</label>
+                <input type="color" value={d.primaryColor || '#1a365d'} onChange={e => setField('primaryColor', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>Secondary</label>
+                <input type="color" value={d.secondaryColor || '#2a4a7f'} onChange={e => setField('secondaryColor', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>Accent</label>
+                <input type="color" value={d.accentColor || '#c6973f'} onChange={e => setField('accentColor', e.target.value)} />
+              </div>
+            </div>
+
+            <h2 className="section-title" style={{ marginTop: '2rem' }}>Email</h2>
+            <div className="form-row">
+              <div className="form-group">
+                <label>From email</label>
+                <input type="email" value={d.fromEmail || ''} onChange={e => setField('fromEmail', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>Reply-to email</label>
+                <input type="email" value={d.replyToEmail || ''} onChange={e => setField('replyToEmail', e.target.value)} />
+              </div>
+            </div>
+            <div className="form-group">
+              <label>Default footer signature</label>
+              <textarea
+                rows="3"
+                value={d.emailFooterSignature || ''}
+                onChange={e => setField('emailFooterSignature', e.target.value)}
+                placeholder="Sephardic Torah Center of Dallas"
+              />
+            </div>
+
+            <h2 className="section-title" style={{ marginTop: '2rem' }}>Receipts &amp; statements</h2>
+            <div className="form-group">
+              <label>Mailing address</label>
+              <textarea rows="3" value={d.address || ''} onChange={e => setField('address', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Tax ID / EIN</label>
+              <input type="text" value={d.taxId || ''} onChange={e => setField('taxId', e.target.value)} />
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
+              <button className="pay-btn" onClick={saveBranding} disabled={savingBranding}>
+                {savingBranding ? 'Saving...' : 'Save branding'}
+              </button>
+              <button className="modal-btn-secondary" onClick={() => setBrandingDraft(null)} disabled={savingBranding}>
+                Revert
+              </button>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

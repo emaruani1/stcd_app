@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import Login from './pages/Login'
 import Layout from './components/Layout'
@@ -26,15 +26,27 @@ import PledgerPledges from './pages/PledgerPledges'
 import { logout, getCurrentSession } from './auth'
 import * as api from './api'
 import { computeAccountBalance, byNewest } from './ledger'
+import { useTenant } from './TenantContext'
 import './App.css'
 
-const defaultTemplates = {
-  yahrzeit: { subject: 'Yahrzeit Reminder - {deceasedName}', body: 'Dear {memberName},\n\nThis is a reminder that the yahrzeit of your {relationship}, {deceasedName}, is approaching on {date}.\n\nMay their memory be a blessing.\n\nWarm regards,\nSephardic Torah Center of Dallas' },
-  birthday: { subject: 'Happy Birthday, {celebrantName}!', body: 'Dear {memberName},\n\nWishing a very Happy Birthday to {celebrantName}!\n\nMay this year be filled with health, happiness, and blessings.\n\nWarm regards,\nSephardic Torah Center of Dallas' },
-  barBatMitzvah: { subject: 'Mazal Tov - Upcoming Bar/Bat Mitzvah for {childName}', body: 'Dear {memberName},\n\nMazal Tov on the upcoming Bar/Bat Mitzvah of {childName} on {date}!\n\nParashat {parasha} - What a wonderful occasion.\n\nWe look forward to celebrating with your family.\n\nWarm regards,\nSephardic Torah Center of Dallas' },
+// Default email-template bodies. The footer signature is composed at render
+// time from the tenant's emailFooterSignature so each synagogue gets their
+// own sign-off without us baking it in here.
+function buildDefaultTemplates(footer) {
+  const sig = footer || ''
+  return {
+    yahrzeit: { subject: 'Yahrzeit Reminder - {deceasedName}', body: `Dear {memberName},\n\nThis is a reminder that the yahrzeit of your {relationship}, {deceasedName}, is approaching on {date}.\n\nMay their memory be a blessing.\n\nWarm regards,\n${sig}` },
+    birthday: { subject: 'Happy Birthday, {celebrantName}!', body: `Dear {memberName},\n\nWishing a very Happy Birthday to {celebrantName}!\n\nMay this year be filled with health, happiness, and blessings.\n\nWarm regards,\n${sig}` },
+    barBatMitzvah: { subject: 'Mazal Tov - Upcoming Bar/Bat Mitzvah for {childName}', body: `Dear {memberName},\n\nMazal Tov on the upcoming Bar/Bat Mitzvah of {childName} on {date}!\n\nParashat {parasha} - What a wonderful occasion.\n\nWe look forward to celebrating with your family.\n\nWarm regards,\n${sig}` },
+  }
 }
 
 function App() {
+  const { tenant, refreshTenant } = useTenant()
+  const defaultTemplates = useMemo(
+    () => buildDefaultTemplates(tenant.emailFooterSignature),
+    [tenant.emailFooterSignature],
+  )
   const [session, setSession] = useState(null) // { email, role, memberId, token }
   const [loading, setLoading] = useState(true)
 
@@ -323,6 +335,13 @@ function App() {
       .catch(err => console.error('Failed to fetch payment config:', err))
     return () => { cancelled = true }
   }, [session])
+
+  // Pull the full tenant record (colors / display name / address / etc) once
+  // logged in. TenantProvider applies CSS variables + page title; the tenant
+  // value is read directly by Layout + the Branding settings tab.
+  useEffect(() => {
+    if (session) refreshTenant()
+  }, [session, refreshTenant])
 
   const handleLogin = (sessionData) => {
     setSession(sessionData)

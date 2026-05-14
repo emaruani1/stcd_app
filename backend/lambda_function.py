@@ -773,6 +773,12 @@ def lambda_handler(event, context):
         # xKey — that stays server-side.
         if path == '/tenants/me/payment-config' and method == 'GET':
             return get_tenant_payment_config()
+        # Full tenant record (sans credentials). Any authenticated user in
+        # the tenant may read; only admins may write.
+        if path == '/tenants/me' and method == 'GET':
+            return get_tenant_me()
+        if path == '/tenants/me' and method == 'PUT':
+            return update_tenant_me(parse_body(event))
 
         # ===== COGNITO USER MANAGEMENT =====
         if path == '/users/lookup' and method == 'POST':
@@ -2774,6 +2780,69 @@ def cognito_update_role(body):
 #
 # We never store CVV or full card number. Sola is the vault for the card data;
 # our DynamoDB is the index that maps members -> their saved tokens.
+
+# Fields readable by anyone in the tenant. Excludes solaXKey (server-only) and
+# any future private credentials we add to stcd_tenants.
+_TENANT_PUBLIC_FIELDS = {
+    'tenantId', 'displayName', 'legalName', 'domain', 'primaryColor',
+    'secondaryColor', 'accentColor', 'logoS3Key', 'solaIFieldsKey',
+    'solaSoftwareName', 'solaSoftwareVersion', 'timezone', 'currency',
+    'fromEmail', 'replyToEmail', 'emailFooterSignature', 'taxId', 'address',
+    'status', 'createdAt', 'createdBy',
+}
+# Fields admins may edit via PUT /tenants/me. Intentionally excludes solaXKey,
+# tenantId, createdAt/createdBy, status — those are platform-owned, not
+# tenant-owned. solaGatewayUrl / softwareName / softwareVersion are private to
+# operations as well.
+_TENANT_ADMIN_EDITABLE = {
+    'displayName', 'legalName', 'primaryColor', 'secondaryColor', 'accentColor',
+    'logoS3Key', 'solaIFieldsKey', 'timezone', 'currency', 'fromEmail',
+    'replyToEmail', 'emailFooterSignature', 'taxId', 'address',
+}
+
+
+def get_tenant_me():
+    """Return the caller's tenant row with private credentials stripped.
+    Available to any authenticated user in the tenant."""
+    tenant_id = _require_tenant()
+    tenant = _load_tenant(tenant_id) or {}
+    return respond(200, {k: v for k, v in tenant.items() if k in _TENANT_PUBLIC_FIELDS})
+
+
+def update_tenant_me(body):
+    """Admin-only: update the caller's tenant row. Only fields in
+    _TENANT_ADMIN_EDITABLE are accepted; everything else is silently
+    dropped so a tampered request can't promote itself or rewrite the
+    Sola xKey."""
+    if not _is_admin():
+        return _forbid()
+    tenant_id = _require_tenant()
+    updates = {k: v for k, v in (body or {}).items() if k in _TENANT_ADMIN_EDITABLE}
+    if not updates:
+        return respond(400, {'error': 'No editable fields in request'})
+    expr_parts, expr_names, expr_values = [], {}, {}
+    for k, v in updates.items():
+        safe = f"#{k}"
+        expr_names[safe] = k
+        expr_parts.append(f"{safe} = :{k}")
+        expr_values[f":{k}"] = v
+    actor = _get_actor()
+    for k, v in {'modifiedBy': actor['email'] or 'unknown', 'modifiedByRole': actor['role'] or '', 'modifiedAt': _now_iso()}.items():
+        safe = f"#{k}"
+        expr_names[safe] = k
+        expr_parts.append(f"{safe} = :{k}")
+        expr_values[f":{k}"] = v
+    tenants_table.update_item(
+        Key={'tenantId': tenant_id},
+        UpdateExpression='SET ' + ', '.join(expr_parts),
+        ExpressionAttributeNames=expr_names,
+        ExpressionAttributeValues=expr_values,
+    )
+    _bust_tenant_cache(tenant_id)
+    # Return the updated public view so the frontend can re-apply branding
+    # without a separate refetch.
+    return get_tenant_me()
+
 
 def get_tenant_payment_config():
     """Public-to-the-tenant bootstrap data for the Sola iFrame + receipts.

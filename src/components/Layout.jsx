@@ -1,8 +1,10 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import { adminUser } from '../data/fakeData'
 import { useState } from 'react'
+import { useTenant, logoUrlFromTenant } from '../TenantContext'
 
 export default function Layout({ children, onLogout, userRole, currentMember }) {
+  const { tenant } = useTenant()
   const location = useLocation()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
@@ -65,9 +67,9 @@ export default function Layout({ children, onLogout, userRole, currentMember }) 
               <span></span>
             </button>
             <div className="portal-logo">
-              <img src="/stcd_logo.png" alt="STCD Logo" />
+              <img src={logoUrlFromTenant(tenant)} alt={`${tenant.displayName || 'Portal'} Logo`} />
               <div className="portal-logo-text">
-                <span className="portal-logo-title">STCD</span>
+                <span className="portal-logo-title">{tenant.displayName || 'Portal'}</span>
                 <span className="portal-logo-subtitle">
                   {isAdmin ? 'Admin Portal' : isPledger ? 'Pledger Portal' : 'Member Portal'}
                 </span>

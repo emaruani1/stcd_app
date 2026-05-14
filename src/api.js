@@ -106,6 +106,10 @@ export const chargeSavedCard = (data) =>
 // Public-per-tenant payment bootstrap. Returns { tenantId, iFieldsKey,
 // softwareName, softwareVersion, displayName }. NEVER returns xKey.
 export const fetchPaymentConfig = () => request('/tenants/me/payment-config')
+// Full tenant record (sans private credentials). Read by any user, written
+// only by admins. Returned dict drives display name, colors, logo, etc.
+export const fetchTenant = () => request('/tenants/me')
+export const updateTenant = (data) => request('/tenants/me', { method: 'PUT', body: JSON.stringify(data) })
 
 // ===== BILLING =====
 // Per-member, called in a loop by the admin Membership Billing page.
