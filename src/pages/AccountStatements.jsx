@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
-import { withRunningBalance, neutralReason, paymentTypeLabel, formatAttribution } from '../ledger'
+import { withRunningBalance, neutralReason, paymentTypeLabel, formatAttribution, cancelKind } from '../ledger'
 
 export default function AccountStatements({
   allMembers,
@@ -469,22 +469,33 @@ export default function AccountStatements({
               ) : (
                 filtered.map((t, idx) => {
                   const impact = t.balanceImpact
+                  const isCanceled = impact === 'canceled'
                   const isNeutral = impact === 'neutral'
                   const noteText = isNeutral ? neutralReason(t.paymentType) : ''
-                  const signedAmount = impact === 'charge' ? `-$${t.amount.toLocaleString()}` :
+                  const kind = isCanceled ? cancelKind(t) : ''
+                  const signedAmount = isCanceled ? `$${t.amount.toLocaleString()}` :
+                                       impact === 'charge' ? `-$${t.amount.toLocaleString()}` :
                                        impact === 'payment' ? `+$${t.amount.toLocaleString()}` :
                                        `$${t.amount.toLocaleString()}`
-                  const amountColor = impact === 'charge' ? 'var(--danger)' :
+                  const amountColor = isCanceled ? 'var(--text-muted)' :
+                                      impact === 'charge' ? 'var(--danger)' :
                                       impact === 'payment' ? 'var(--success)' :
                                       'var(--text)'
                   const runningSigned = t.runningBalance < 0
                     ? `-$${Math.abs(t.runningBalance).toLocaleString()}`
                     : `$${t.runningBalance.toLocaleString()}`
+                  const rowStyle = isCanceled ? { opacity: 0.7, background: 'var(--bg-warm)' } : {}
                   return (
-                    <tr key={t.id || idx}>
+                    <tr key={t.id || idx} style={rowStyle}>
                       <td>{formatDate(t.date)}</td>
                       <td>
-                        {t.description}
+                        <span style={isCanceled ? { textDecoration: 'line-through' } : {}}>{t.description}</span>
+                        {isCanceled && (
+                          <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '2px', fontWeight: 600 }}>
+                            {kind === 'declined' ? 'Declined by card processor' : 'Canceled'}
+                            {t.cancellationReason ? ` — ${t.cancellationReason}` : ''}
+                          </div>
+                        )}
                         {noteText && (
                           <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '2px' }}>
                             {noteText}
@@ -502,10 +513,16 @@ export default function AccountStatements({
                       {memberAliases.length > 0 && (
                         <td style={{ fontSize: '0.82rem' }}>{t.alias || `${member.firstName} ${member.lastName}`}</td>
                       )}
-                      <td>{paymentTypeBadge(t.paymentType)}</td>
-                      <td className="amount-cell" style={{ color: amountColor, fontWeight: 600 }}>{signedAmount}</td>
+                      <td>
+                        {isCanceled ? (
+                          <span className="badge badge-pending">{kind === 'declined' ? 'Declined' : 'Canceled'}</span>
+                        ) : (
+                          paymentTypeBadge(t.paymentType)
+                        )}
+                      </td>
+                      <td className="amount-cell" style={{ color: amountColor, fontWeight: 600, textDecoration: isCanceled ? 'line-through' : 'none' }}>{signedAmount}</td>
                       <td className="amount-cell" style={{ color: t.runningBalance < 0 ? 'var(--danger)' : 'var(--text-muted)' }}>
-                        {isNeutral ? '—' : runningSigned}
+                        {(isNeutral || isCanceled) ? '—' : runningSigned}
                       </td>
                       <td>{t.method}</td>
                       <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>

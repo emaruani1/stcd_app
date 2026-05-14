@@ -56,28 +56,46 @@ export function computeAccountBalance(transactions) {
 
 /**
  * Annotate transactions sorted oldest -> newest with a runningBalance field.
- * Pass in an array; returns a new array. Canceled rows are dropped — members
- * should not see them and they don't affect the running balance.
+ * Canceled rows (admin-canceled OR gateway-declined) stay in the output so
+ * members see the audit trail, but they carry balanceImpact='canceled' and
+ * don't advance the running balance.
  */
 export function withRunningBalance(transactions) {
   const sorted = [...transactions]
-    .filter(t => !t.canceled)
     .sort((a, b) => {
       const aDate = (a.date || '').localeCompare(b.date || '')
       if (aDate !== 0) return aDate
       // Within the same day: charges before payments so a same-day pair displays
       // as -X then +X (net 0) rather than +X then -X (which briefly shows as positive).
-      const order = { charge: 0, neutral: 1, payment: 2 }
-      return (order[balanceImpact(a.paymentType)] ?? 1) - (order[balanceImpact(b.paymentType)] ?? 1)
+      const order = { charge: 0, neutral: 1, payment: 2, canceled: 3 }
+      const aImp = a.canceled ? 'canceled' : balanceImpact(a.paymentType)
+      const bImp = b.canceled ? 'canceled' : balanceImpact(b.paymentType)
+      return (order[aImp] ?? 1) - (order[bImp] ?? 1)
     })
   let running = 0
   return sorted.map((t) => {
+    if (t.canceled) {
+      return { ...t, runningBalance: running, balanceImpact: 'canceled' }
+    }
     const amt = Number(t.amount) || 0
     const impact = balanceImpact(t.paymentType)
     if (impact === 'charge') running -= amt
     else if (impact === 'payment') running += amt
     return { ...t, runningBalance: running, balanceImpact: impact }
   })
+}
+
+/**
+ * Distinguish a gateway decline from an admin-cancellation on a canceled row.
+ * `cancellationReason` starting with "Declined:" is stamped by charge_saved_card
+ * when Sola returns a decline; `gatewayResult === 'D'` is the gateway's own
+ * signal. Either makes it a decline; otherwise it's an admin cancel.
+ */
+export function cancelKind(t) {
+  if (!t || !t.canceled) return ''
+  if (t.gatewayResult === 'D') return 'declined'
+  if ((t.cancellationReason || '').toLowerCase().startsWith('declined')) return 'declined'
+  return 'canceled'
 }
 
 /**

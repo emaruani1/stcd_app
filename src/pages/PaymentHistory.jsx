@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { withRunningBalance, balanceImpact, neutralReason, paymentTypeLabel, formatAttribution } from '../ledger'
+import { withRunningBalance, balanceImpact, neutralReason, paymentTypeLabel, formatAttribution, cancelKind } from '../ledger'
 
 // eslint-disable-next-line no-unused-vars
 export default function PaymentHistory({ currentMember, pledgePayments, extraPayments, adminTransactions }) {
@@ -73,7 +73,8 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
     return ledgerEntries.filter(e => dateFilter(e.date))
   }, [ledgerEntries, filter, startDate, endDate])
 
-  // Show net (payments - charges) to match the running-balance concept
+  // Show net (payments - charges) to match the running-balance concept.
+  // Canceled / declined rows are visible in the list but don't move the total.
   const totalFiltered = filteredPayments.reduce((sum, p) => {
     const impact = p.balanceImpact ?? balanceImpact(p.paymentType)
     if (impact === 'charge') return sum - p.amount
@@ -239,15 +240,26 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                 ) : (
                   filteredPayments.map((p, idx) => {
                     const impact = p.balanceImpact ?? balanceImpact(p.paymentType)
+                    const isCanceled = impact === 'canceled'
                     const isNeutral = impact === 'neutral'
                     const noteText = isNeutral ? neutralReason(p.paymentType) : ''
-                    const sign = impact === 'charge' ? '-' : impact === 'payment' ? '+' : ''
-                    const color = impact === 'charge' ? 'var(--danger)' : impact === 'payment' ? 'var(--success)' : 'inherit'
+                    const sign = isCanceled ? '' : impact === 'charge' ? '-' : impact === 'payment' ? '+' : ''
+                    const color = isCanceled ? 'var(--text-muted)' : impact === 'charge' ? 'var(--danger)' : impact === 'payment' ? 'var(--success)' : 'inherit'
+                    const kind = isCanceled ? cancelKind(p) : ''
+                    const rowStyle = isCanceled
+                      ? { opacity: 0.7, background: 'var(--bg-warm)' }
+                      : {}
                     return (
-                      <tr key={p.id || idx}>
+                      <tr key={p.id || idx} style={rowStyle}>
                         <td>{formatDate(p.date)}</td>
                         <td>
-                          {p.description}
+                          <span style={isCanceled ? { textDecoration: 'line-through' } : {}}>{p.description}</span>
+                          {isCanceled && (
+                            <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '2px', fontWeight: 600 }}>
+                              {kind === 'declined' ? 'Declined by card processor' : 'Canceled'}
+                              {p.cancellationReason ? ` — ${p.cancellationReason}` : ''}
+                            </div>
+                          )}
                           {noteText && (
                             <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '2px' }}>
                               {noteText}
@@ -263,8 +275,14 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                           })()}
                         </td>
                         {memberAliases.length > 0 && <td style={{ fontSize: '0.82rem' }}>{p.alias || `${currentMember.firstName} ${currentMember.lastName}`}</td>}
-                        <td>{paymentTypeBadge(p.paymentType)}</td>
-                        <td className="amount-cell" style={{ color, fontWeight: sign ? 600 : 400 }}>
+                        <td>
+                          {isCanceled ? (
+                            <span className="badge badge-pending">{kind === 'declined' ? 'Declined' : 'Canceled'}</span>
+                          ) : (
+                            paymentTypeBadge(p.paymentType)
+                          )}
+                        </td>
+                        <td className="amount-cell" style={{ color, fontWeight: sign ? 600 : 400, textDecoration: isCanceled ? 'line-through' : 'none' }}>
                           {sign}${p.amount.toLocaleString()}
                         </td>
                         <td>{p.method}</td>
@@ -315,13 +333,22 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                 ) : (
                   filteredLedger.map((e, idx) => {
                     const impact = e.balanceImpact ?? balanceImpact(e.paymentType)
+                    const isCanceled = impact === 'canceled'
                     const isNeutral = impact === 'neutral'
                     const noteText = isNeutral ? neutralReason(e.paymentType) : ''
+                    const kind = isCanceled ? cancelKind(e) : ''
+                    const rowStyle = isCanceled ? { opacity: 0.7, background: 'var(--bg-warm)' } : {}
                     return (
-                      <tr key={e.id || idx}>
+                      <tr key={e.id || idx} style={rowStyle}>
                         <td>{formatDate(e.date)}</td>
                         <td>
-                          {e.description}
+                          <span style={isCanceled ? { textDecoration: 'line-through' } : {}}>{e.description}</span>
+                          {isCanceled && (
+                            <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '2px', fontWeight: 600 }}>
+                              {kind === 'declined' ? 'Declined by card processor' : 'Canceled'}
+                              {e.cancellationReason ? ` — ${e.cancellationReason}` : ''}
+                            </div>
+                          )}
                           {noteText && (
                             <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '2px' }}>
                               {noteText}
@@ -336,9 +363,15 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                             ) : null
                           })()}
                         </td>
-                        <td>{paymentTypeBadge(e.paymentType)}</td>
-                        <td className="amount-cell" style={{ color: 'var(--danger)' }}>
-                          {impact === 'charge' ? `$${e.amount.toLocaleString()}` : ''}
+                        <td>
+                          {isCanceled ? (
+                            <span className="badge badge-pending">{kind === 'declined' ? 'Declined' : 'Canceled'}</span>
+                          ) : (
+                            paymentTypeBadge(e.paymentType)
+                          )}
+                        </td>
+                        <td className="amount-cell" style={{ color: 'var(--danger)', textDecoration: isCanceled ? 'line-through' : 'none' }}>
+                          {(impact === 'charge' || isCanceled) ? `$${e.amount.toLocaleString()}` : ''}
                         </td>
                         <td className="amount-cell" style={{ color: 'var(--success)' }}>
                           {impact === 'payment' ? `$${e.amount.toLocaleString()}` : ''}
@@ -347,7 +380,7 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
                           fontWeight: 600,
                           color: e.runningBalance < 0 ? 'var(--danger)' : 'var(--success)',
                         }}>
-                          {isNeutral ? '—' : (
+                          {(isNeutral || isCanceled) ? '—' : (
                             e.runningBalance < 0
                               ? `-$${Math.abs(e.runningBalance).toLocaleString()}`
                               : `$${e.runningBalance.toLocaleString()}`
