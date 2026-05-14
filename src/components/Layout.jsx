@@ -69,7 +69,21 @@ export default function Layout({ children, onLogout, userRole, currentMember }) 
               <span></span>
             </button>
             <div className="portal-logo">
-              <img src={logoUrlFromTenant(tenant)} alt={`${tenant.displayName || 'Portal'} Logo`} />
+              {(() => {
+                const url = logoUrlFromTenant(tenant)
+                // The bundled default needs the brightness/invert filter to
+                // render legibly on the dark header (it's a dark-on-white
+                // mark). Tenant-uploaded logos render as-is — admins are
+                // responsible for picking one that contrasts with the header.
+                const isDefault = !tenant?.logoUrl
+                return (
+                  <img
+                    src={url}
+                    alt={`${tenant.displayName || 'Portal'} Logo`}
+                    className={isDefault ? 'portal-logo-default' : 'portal-logo-uploaded'}
+                  />
+                )
+              })()}
               <div className="portal-logo-text">
                 <span className="portal-logo-title">{tenant.displayName || 'Portal'}</span>
                 <span className="portal-logo-subtitle">

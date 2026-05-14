@@ -87,6 +87,7 @@ export default function Login({ onLogin }) {
     legalName: '',
     primaryColor: '#1a365d',
     accentColor: '#c6973f',
+    logoUrl: '',
   })
   useEffect(() => {
     let cancelled = false
@@ -98,6 +99,7 @@ export default function Login({ onLogin }) {
           legalName: b.legalName || '',
           primaryColor: b.primaryColor || '#1a365d',
           accentColor: b.accentColor || '#c6973f',
+          logoUrl: b.logoUrl || '',
         })
         // Apply CSS vars so the login button colors etc match.
         const root = document.documentElement
@@ -264,7 +266,11 @@ export default function Login({ onLogin }) {
       <div className="login-bg-pattern"></div>
       <div className="login-card">
         <div className="login-header">
-          <img src="/stcd_logo.png" alt={`${branding.displayName} Logo`} className="login-logo" />
+          <img
+            src={branding.logoUrl || '/stcd_logo.png'}
+            alt={`${branding.displayName} Logo`}
+            className={`login-logo ${branding.logoUrl ? 'login-logo-uploaded' : 'login-logo-default'}`}
+          />
           <h1>{branding.legalName || branding.displayName}</h1>
           {branding.legalName && branding.legalName !== branding.displayName && (
             <p className="login-subtitle">{branding.displayName}</p>

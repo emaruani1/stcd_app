@@ -2845,6 +2845,10 @@ def get_public_branding(event):
         'secondaryColor': match.get('secondaryColor', '#2a4a7f'),
         'accentColor': match.get('accentColor', '#c6973f'),
         'logoS3Key': match.get('logoS3Key', ''),
+        # Presigned GET so the Login page can render the per-tenant logo
+        # before any JWT exists. URL has the credentials embedded; the
+        # bucket can stay private.
+        'logoUrl': _presigned_logo_url(match.get('logoS3Key')),
     }
     return respond(200, safe)
 

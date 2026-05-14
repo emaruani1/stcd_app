@@ -43,8 +43,13 @@
   width: 80px;
   height: 80px;
   object-fit: contain;
-  filter: brightness(0) invert(1);
   margin: 0 auto 16px;
+}
+
+/* Bundled default needs the inversion to read on the dark login card.
+   Tenant-uploaded logos render natively — admins pick one that contrasts. */
+.login-logo-default {
+  filter: brightness(0) invert(1);
 }
 
 .login-header h1 {
@@ -189,6 +194,15 @@
 
 .portal-logo img {
   height: 42px;
+  width: auto;
+  max-width: 180px;
+  object-fit: contain;
+}
+
+/* The bundled default logo is a dark-on-light mark; force it white so it
+   sits legibly on the navy header. Tenant-uploaded logos opt out — admins
+   are expected to upload a logo that already reads on their primary color. */
+.portal-logo-default {
   filter: brightness(0) invert(1);
 }
 
