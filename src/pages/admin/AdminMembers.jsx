@@ -322,7 +322,7 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
                                   ))}
                                   {' '}&mdash;{' '}
                                   <button
-                                    onClick={(e) => { e.stopPropagation(); navigate(`/admin/merge?member=${m.id}`) }}
+                                    onClick={(e) => { e.stopPropagation(); navigate(`/admin/merge?member=${m.id}&secondary=${dupes[0].id}`) }}
                                     style={{
                                       background: 'none', border: 'none', color: '#856404', cursor: 'pointer',
                                       textDecoration: 'underline', fontWeight: 600, padding: 0, fontSize: 'inherit',
@@ -386,7 +386,14 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
                               </button>
                               <button
                                 className="action-btn action-btn-cancel"
-                                onClick={(e) => { e.stopPropagation(); navigate(`/admin/merge?member=${m.id}`) }}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  const firstDupe = m.email
+                                    ? allMembers.find(o => o.id !== m.id && o.email && o.email.toLowerCase() === m.email.toLowerCase())
+                                    : null
+                                  const qs = firstDupe ? `?member=${m.id}&secondary=${firstDupe.id}` : `?member=${m.id}`
+                                  navigate(`/admin/merge${qs}`)
+                                }}
                               >
                                 Merge Account
                               </button>
