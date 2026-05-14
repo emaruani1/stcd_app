@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { login, forgotPassword, confirmNewPassword } from '../auth'
+import * as api from '../api'
 
 const PASSWORD_RULES = [
   { test: (p) => p.length >= 8,        label: 'At least 8 characters' },
@@ -78,6 +79,36 @@ export default function Login({ onLogin }) {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
+  // Pre-login tenant branding so the Login page renders with the right
+  // synagogue's name + colors before the user authenticates. Resolved by
+  // hostname; falls back to platform defaults if the lookup fails.
+  const [branding, setBranding] = useState({
+    displayName: 'Member Portal',
+    legalName: '',
+    primaryColor: '#1a365d',
+    accentColor: '#c6973f',
+  })
+  useEffect(() => {
+    let cancelled = false
+    api.fetchPublicBranding(window.location.hostname)
+      .then(b => {
+        if (cancelled || !b) return
+        setBranding({
+          displayName: b.displayName || 'Member Portal',
+          legalName: b.legalName || '',
+          primaryColor: b.primaryColor || '#1a365d',
+          accentColor: b.accentColor || '#c6973f',
+        })
+        // Apply CSS vars so the login button colors etc match.
+        const root = document.documentElement
+        if (b.primaryColor) root.style.setProperty('--primary', b.primaryColor)
+        if (b.secondaryColor) root.style.setProperty('--secondary', b.secondaryColor)
+        if (b.accentColor) root.style.setProperty('--accent', b.accentColor)
+        if (b.displayName) document.title = `${b.displayName} Member Portal`
+      })
+      .catch(() => { /* keep defaults */ })
+    return () => { cancelled = true }
+  }, [])
 
   // 'login' | 'newPassword' | 'mfa' | 'forgot' | 'confirm'
   const [mode, setMode] = useState('login')
@@ -233,9 +264,11 @@ export default function Login({ onLogin }) {
       <div className="login-bg-pattern"></div>
       <div className="login-card">
         <div className="login-header">
-          <img src="/stcd_logo.png" alt="STCD Logo" className="login-logo" />
-          <h1>Sephardic Torah Center</h1>
-          <p className="login-subtitle">of Dallas</p>
+          <img src="/stcd_logo.png" alt={`${branding.displayName} Logo`} className="login-logo" />
+          <h1>{branding.legalName || branding.displayName}</h1>
+          {branding.legalName && branding.legalName !== branding.displayName && (
+            <p className="login-subtitle">{branding.displayName}</p>
+          )}
           <p className="login-desc">Member Portal</p>
         </div>
 

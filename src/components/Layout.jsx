@@ -1,5 +1,4 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { adminUser } from '../data/fakeData'
 import { useState } from 'react'
 import { useTenant, logoUrlFromTenant } from '../TenantContext'
 
@@ -40,7 +39,10 @@ export default function Layout({ children, onLogout, userRole, currentMember }) 
   ]
 
   const navItems = isAdmin ? adminNavItems : isPledger ? pledgerNavItems : memberNavItems
-  const displayUser = isAdmin ? adminUser : currentMember
+  // Admins and pledgers don't surface a member record here (their displayName /
+  // initials / ID block are hard-coded below); members fall back to their own
+  // record.
+  const displayUser = (isAdmin || isPledger) ? null : currentMember
   const displayName = isAdmin
     ? 'Admin'
     : isPledger

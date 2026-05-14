@@ -18,9 +18,6 @@ export const membershipTiers = {
   },
 };
 
-// ========== ADMIN USER (for display) ==========
-export const adminUser = { id: 'admin', firstName: 'Admin', lastName: '', email: 'admin@stcd.org', role: 'admin' };
-
 // ========== BLOCKED DATES (local until API supports it) ==========
 export const blockedDates = [];
 

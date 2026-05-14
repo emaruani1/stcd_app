@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { changePassword, setupMfa, verifyMfa, disableMfa, getMfaStatus } from '../auth'
+import { useTenant } from '../TenantContext'
 
 const PASSWORD_RULES = [
   { test: (p) => p.length >= 8,   label: 'At least 8 characters' },
@@ -64,6 +65,7 @@ function PasswordField({ value, onChange, placeholder, autoComplete, id }) {
  * inside the Profile page.
  */
 export default function AccountSecurity({ userRole, embedded = false }) {
+  const { tenant } = useTenant()
   const [oldPwd, setOldPwd] = useState('')
   const [newPwd, setNewPwd] = useState('')
   const [confirmPwd, setConfirmPwd] = useState('')
@@ -118,7 +120,7 @@ export default function AccountSecurity({ userRole, embedded = false }) {
     setMfaMsg({ kind: '', text: '' })
     setMfaLoading(true)
     try {
-      const setup = await setupMfa()
+      const setup = await setupMfa(`${tenant.displayName || 'Member'} Portal`)
       setMfaSetup(setup)
     } catch {
       setMfaMsg({ kind: 'error', text: 'Could not start MFA setup. Please try again.' })

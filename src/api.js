@@ -110,6 +110,19 @@ export const fetchPaymentConfig = () => request('/tenants/me/payment-config')
 // only by admins. Returned dict drives display name, colors, logo, etc.
 export const fetchTenant = () => request('/tenants/me')
 export const updateTenant = (data) => request('/tenants/me', { method: 'PUT', body: JSON.stringify(data) })
+// Pre-login branding for the Login page. UNAUTHENTICATED. Pass the current
+// hostname; the backend resolves it to a tenant row and returns visual
+// fields only (name, colors, logo key — no email, address, credentials).
+export const fetchPublicBranding = (host) =>
+  request(`/public/branding?host=${encodeURIComponent(host || '')}`)
+// Request a 5-minute presigned PUT URL for the tenant's logo. Frontend
+// then PUTs the file body directly to S3 (no Lambda transcoding) and
+// finally calls updateTenant({ logoS3Key }) so the row points at it.
+export const requestLogoUpload = (contentType) =>
+  request('/tenants/me/logo-upload', {
+    method: 'POST',
+    body: JSON.stringify({ contentType }),
+  })
 
 // ===== BILLING =====
 // Per-member, called in a loop by the admin Membership Billing page.

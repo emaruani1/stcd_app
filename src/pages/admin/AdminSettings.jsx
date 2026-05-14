@@ -14,6 +14,38 @@ export default function AdminSettings({
   const { tenant, setTenantLocal, refreshTenant } = useTenant()
   const [brandingDraft, setBrandingDraft] = useState(null)
   const [savingBranding, setSavingBranding] = useState(false)
+  const [logoUploading, setLogoUploading] = useState(false)
+
+  // Two-step logo upload: ask the backend for a presigned PUT URL, send the
+  // file body straight to S3 (skips the 6 MB Lambda payload limit), then
+  // persist the key on the tenant row. Refreshing the tenant pulls a fresh
+  // presigned GET URL so the header logo updates without a hard reload.
+  const handleLogoUpload = async (file) => {
+    if (!file) return
+    if (file.size > 2 * 1024 * 1024) {
+      showToast('Logo must be 2 MB or smaller')
+      return
+    }
+    setLogoUploading(true)
+    try {
+      const ct = file.type || 'image/png'
+      const { uploadUrl, logoS3Key } = await api.requestLogoUpload(ct)
+      const putRes = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': ct },
+        body: file,
+      })
+      if (!putRes.ok) throw new Error(`S3 upload failed (${putRes.status})`)
+      const updated = await api.updateTenant({ logoS3Key })
+      setTenantLocal(updated)
+      await refreshTenant()
+      showToast('Logo updated')
+    } catch (e) {
+      showToast('Error: ' + e.message)
+    } finally {
+      setLogoUploading(false)
+    }
+  }
 
   // Lazy-init the draft when the user enters the branding tab so edits don't
   // start with the fallback values from a pre-fetch render.
@@ -678,6 +710,26 @@ export default function AdminSettings({
               <div className="form-group">
                 <label>Legal name</label>
                 <input type="text" value={d.legalName || ''} onChange={e => setField('legalName', e.target.value)} />
+              </div>
+            </div>
+
+            <h2 className="section-title" style={{ marginTop: '2rem' }}>Logo</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+              <img
+                src={tenant.logoUrl || '/stcd_logo.png'}
+                alt="Current logo"
+                style={{ width: 64, height: 64, objectFit: 'contain', background: 'var(--bg-warm)', borderRadius: 'var(--radius-sm)', padding: 6 }}
+              />
+              <div>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                  onChange={e => handleLogoUpload(e.target.files?.[0])}
+                  disabled={logoUploading}
+                />
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.4rem 0 0 0' }}>
+                  PNG, JPG, SVG, or WebP. 2 MB max. Used in the header, login page, and browser tab.
+                </p>
               </div>
             </div>
 

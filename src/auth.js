@@ -136,8 +136,12 @@ export async function changePassword(oldPassword, newPassword) {
 /**
  * Begin TOTP setup. Returns { secret, otpauthUri } the UI can render as a
  * QR code. The user scans with an authenticator app and confirms with verifyMfa.
+ *
+ * @param {string} [issuerName] — Override the otpauth issuer (the label that
+ *   shows in Google Authenticator / Authy). Callers pass the current tenant's
+ *   display name so each synagogue shows its own brand, not "STCD Member Portal".
  */
-export async function setupMfa() {
+export async function setupMfa(issuerName) {
   const user = await getAuthedUser()
   const secret = await new Promise((resolve, reject) => {
     user.associateSoftwareToken({
@@ -147,7 +151,7 @@ export async function setupMfa() {
   })
   // Decoding the JWT to grab the email for the otpauth label
   const session = await getCurrentSession()
-  const issuer = 'STCD Member Portal'
+  const issuer = issuerName || 'Member Portal'
   const account = session?.email || 'user'
   const otpauthUri = `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}`
   return { secret, otpauthUri }

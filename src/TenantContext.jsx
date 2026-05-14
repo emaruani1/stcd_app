@@ -28,14 +28,13 @@ const TenantContext = createContext({
   setTenantLocal: () => {},
 })
 
-// Derive a logo URL from the tenant record. Falls back to the bundled
-// default if the tenant hasn't uploaded one yet. Once we put the
-// stcd-saas-tenant-assets bucket behind CloudFront (Phase 4 followup),
-// swap this to construct the CDN URL from logoS3Key.
+// Derive a logo URL from the tenant record. The backend returns a 1-hour
+// presigned S3 GET URL in `tenant.logoUrl` whenever a logo has been
+// uploaded; falls back to the bundled default. A future CloudFront + OAC
+// migration would replace `tenant.logoUrl` with a stable CDN URL; this
+// helper's contract stays the same.
 export function logoUrlFromTenant(tenant) {
-  if (!tenant) return '/stcd_logo.png'
-  // TODO Phase 4 followup: return `${CDN}/${tenant.logoS3Key}` once OAC is wired.
-  return '/stcd_logo.png'
+  return tenant?.logoUrl || '/stcd_logo.png'
 }
 
 function applyBranding(tenant) {
@@ -46,6 +45,14 @@ function applyBranding(tenant) {
   if (tenant.accentColor)   root.style.setProperty('--accent',    tenant.accentColor)
   if (tenant.displayName) {
     document.title = `${tenant.displayName} Member Portal`
+  }
+  // Favicon — point at the tenant's logo so the browser tab shows the right
+  // crest. Falls back to whatever logoUrlFromTenant returns, which today is
+  // the bundled stcd_logo.png; once the CloudFront pipeline is wired this
+  // automatically picks up per-tenant logos uploaded to S3.
+  const favicon = document.getElementById('favicon')
+  if (favicon) {
+    favicon.href = logoUrlFromTenant(tenant)
   }
 }
 

@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { withRunningBalance, neutralReason, paymentTypeLabel, formatAttribution, cancelKind, gatewayFriendlyReason } from '../ledger'
+import { useTenant } from '../TenantContext'
 
 export default function AccountStatements({
   allMembers,
@@ -9,6 +10,7 @@ export default function AccountStatements({
   isAdmin,
   currentMemberId,
 }) {
+  const { tenant } = useTenant()
   const params = useParams()
   const memberId = isAdmin ? Number(params.memberId) : currentMemberId
 
@@ -244,7 +246,9 @@ export default function AccountStatements({
         </style>
       </head>
       <body>
-        <h1>Sephardic Torah Center of Dallas</h1>
+        <h1>${escapeHTML(tenant.legalName || tenant.displayName || 'Member Portal')}</h1>
+        ${tenant.address ? `<p style="font-size: 11px; color: #5a6577; margin: 0 0 2px; white-space: pre-line;">${escapeHTML(tenant.address)}</p>` : ''}
+        ${tenant.taxId ? `<p style="font-size: 11px; color: #5a6577; margin: 0 0 8px;">Tax ID: ${escapeHTML(tenant.taxId)}</p>` : ''}
         <h2>Account Statement — ${escapeHTML(memberName)}</h2>
         <p style="font-size: 12px; color: #5a6577; margin: 0 0 12px;">Period: ${escapeHTML(periodLabel)}</p>
         <div class="summary">

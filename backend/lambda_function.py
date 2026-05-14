@@ -18,6 +18,8 @@ from botocore.exceptions import ClientError
 
 dynamodb = boto3.resource('dynamodb')
 cognito = boto3.client('cognito-idp')
+s3 = boto3.client('s3', region_name='us-east-2')
+TENANT_ASSETS_BUCKET = os.environ.get('TENANT_ASSETS_BUCKET', 'stcd-saas-tenant-assets-574630139917')
 members_table = dynamodb.Table(os.environ.get('MEMBERS_TABLE', 'stcd_members'))
 transactions_table = dynamodb.Table(os.environ.get('TRANSACTIONS_TABLE', 'stcd_transactions'))
 pledges_table = dynamodb.Table(os.environ.get('PLEDGES_TABLE', 'stcd_pledges'))
@@ -660,6 +662,14 @@ def lambda_handler(event, context):
     if method == 'OPTIONS':
         return respond(200, {'message': 'ok'})
 
+    # ===== Public routes (no JWT required) =====
+    # Pre-login branding for the Login page. Returns the same shape as
+    # GET /tenants/me but with NO authentication and only the visual
+    # fields (no email config, address, taxId, sola*, etc) — so an
+    # unauthenticated probe can't enumerate operational details.
+    if path == '/public/branding' and method == 'GET':
+        return get_public_branding(event)
+
     # ===== Mandatory JWT verification for every HTTP route =====
     auth_header = ''
     headers = event.get('headers') or {}
@@ -779,6 +789,8 @@ def lambda_handler(event, context):
             return get_tenant_me()
         if path == '/tenants/me' and method == 'PUT':
             return update_tenant_me(parse_body(event))
+        if path == '/tenants/me/logo-upload' and method == 'POST':
+            return get_logo_upload_url(parse_body(event))
 
         # ===== COGNITO USER MANAGEMENT =====
         if path == '/users/lookup' and method == 'POST':
@@ -2801,12 +2813,101 @@ _TENANT_ADMIN_EDITABLE = {
 }
 
 
+def get_public_branding(event):
+    """Pre-login branding lookup, keyed by ?host=<hostname>. Returns the
+    visual fields only — name + colors + logo key — so the Login page can
+    render with the right synagogue's brand before any JWT exists. NEVER
+    returns operational details (email, address, taxId, sola*, status).
+
+    Lookup strategy: scan-and-filter on `domain`. We have a small number
+    of tenants (single-digit for now), so adding a GSI is premature. If
+    no tenant matches, falls back to the 'stcd' row so the existing
+    deployment keeps working before custom domains are wired up."""
+    qs = event.get('queryStringParameters') or {}
+    host = (qs.get('host') or '').strip().lower()
+    match = None
+    if host:
+        try:
+            scan = tenants_table.scan()
+            for t in scan.get('Items', []):
+                if (t.get('domain') or '').lower() == host:
+                    match = t
+                    break
+        except Exception as e:
+            print(f'[public-branding] scan failed: {e}')
+    if not match:
+        match = _load_tenant('stcd') or {}
+    safe = {
+        'tenantId': match.get('tenantId', ''),
+        'displayName': match.get('displayName', 'Member Portal'),
+        'legalName': match.get('legalName', ''),
+        'primaryColor': match.get('primaryColor', '#1a365d'),
+        'secondaryColor': match.get('secondaryColor', '#2a4a7f'),
+        'accentColor': match.get('accentColor', '#c6973f'),
+        'logoS3Key': match.get('logoS3Key', ''),
+    }
+    return respond(200, safe)
+
+
+def _presigned_logo_url(logo_key):
+    """1-hour presigned GET URL for a tenant's logo. Returns '' when no key
+    is set so the frontend falls back to the bundled default."""
+    if not logo_key:
+        return ''
+    try:
+        return s3.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': TENANT_ASSETS_BUCKET, 'Key': logo_key},
+            ExpiresIn=3600,
+        )
+    except Exception as e:
+        print(f'[logo] presigned GET failed: {e}')
+        return ''
+
+
 def get_tenant_me():
     """Return the caller's tenant row with private credentials stripped.
-    Available to any authenticated user in the tenant."""
+    Available to any authenticated user in the tenant. Includes a 1-hour
+    presigned `logoUrl` so the frontend can render the logo without the
+    S3 bucket being public."""
     tenant_id = _require_tenant()
     tenant = _load_tenant(tenant_id) or {}
-    return respond(200, {k: v for k, v in tenant.items() if k in _TENANT_PUBLIC_FIELDS})
+    out = {k: v for k, v in tenant.items() if k in _TENANT_PUBLIC_FIELDS}
+    out['logoUrl'] = _presigned_logo_url(tenant.get('logoS3Key'))
+    return respond(200, out)
+
+
+def get_logo_upload_url(body):
+    """Admin-only: returns a 5-minute presigned PUT URL locked to
+    `tenants/{tenantId}/logo.<ext>`. Returns the chosen S3 key so the
+    frontend can persist it on the tenant row via PUT /tenants/me."""
+    if not _is_admin():
+        return _forbid()
+    tenant_id = _require_tenant()
+    content_type = (body or {}).get('contentType', 'image/png')
+    ct = content_type.lower()
+    if 'jpeg' in ct or 'jpg' in ct:
+        ext = 'jpg'
+    elif 'svg' in ct:
+        ext = 'svg'
+    elif 'webp' in ct:
+        ext = 'webp'
+    else:
+        ext = 'png'
+    key = f'tenants/{tenant_id}/logo.{ext}'
+    try:
+        url = s3.generate_presigned_url(
+            'put_object',
+            Params={
+                'Bucket': TENANT_ASSETS_BUCKET,
+                'Key': key,
+                'ContentType': content_type,
+            },
+            ExpiresIn=300,
+        )
+    except Exception as e:
+        return respond(500, {'error': f'Failed to issue presigned URL: {e}'})
+    return respond(200, {'uploadUrl': url, 'logoS3Key': key, 'contentType': content_type})
 
 
 def update_tenant_me(body):
