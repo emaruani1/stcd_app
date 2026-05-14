@@ -25,7 +25,7 @@ import AccountSecurity from './pages/AccountSecurity'
 import PledgerPledges from './pages/PledgerPledges'
 import { logout, getCurrentSession } from './auth'
 import * as api from './api'
-import { computeAccountBalance } from './ledger'
+import { computeAccountBalance, byNewest } from './ledger'
 import './App.css'
 
 const defaultTemplates = {
@@ -244,7 +244,7 @@ function App() {
         yahrzeits: m.yahrzeits || [],
         children: m.children || [],
         pledges: pledgesByMember[m.memberId] || [],
-        paymentHistory: (txnsByMember[m.memberId] || []).sort((a, b) => new Date(b.date) - new Date(a.date)),
+        paymentHistory: [...(txnsByMember[m.memberId] || [])].sort(byNewest),
       }))
 
       setAllMembers(enrichedMembers)

@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import * as api from '../../api'
 import MemberSearchSelect from '../../components/MemberSearchSelect'
+import { byNewest } from '../../ledger'
 
 export default function AdminTransactions({
   allMembers, setAllMembers,
@@ -109,7 +110,7 @@ export default function AdminTransactions({
         source: 'admin',
       }
     })
-    return [...fromMembers, ...fromAdmin].sort((a, b) => new Date(b.date) - new Date(a.date))
+    return [...fromMembers, ...fromAdmin].sort(byNewest)
   }, [allMembers, adminTransactions, products])
 
   // Show every transaction the member has, regardless of how it was recorded.

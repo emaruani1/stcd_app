@@ -1,4 +1,5 @@
 import { useState, Fragment } from 'react'
+import { byNewest } from '../../ledger'
 
 export default function AdminEmails({ sentEmails, templates, setTemplates, defaultTemplates }) {
   const [tab, setTab] = useState('sent')
@@ -39,7 +40,7 @@ export default function AdminEmails({ sentEmails, templates, setTemplates, defau
     showToast('Template reset to default')
   }
 
-  const sortedEmails = [...sentEmails].sort((a, b) => new Date(b.date) - new Date(a.date))
+  const sortedEmails = [...sentEmails].sort(byNewest)
 
   return (
     <div className="dashboard-page">

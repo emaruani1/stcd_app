@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import * as api from '../../api'
 import MemberSearchSelect from '../../components/MemberSearchSelect'
 import IFieldsCardForm from '../../components/IFieldsCardForm'
+import { byNewest } from '../../ledger'
 
 const IFIELDS_KEY = import.meta.env.VITE_SOLA_IFIELDS_KEY || ''
 
@@ -156,7 +157,7 @@ export default function AdminPledges({
       if (!`${p.description} ${p.memberName}`.toLowerCase().includes(q) && !email.includes(q) && !aliasStr.includes(q) && !rowAlias.includes(q)) return false
     }
     return true
-  }).sort((a, b) => new Date(b.date) - new Date(a.date))
+  }).sort(byNewest)
 
   // When admin filters to a specific member, expose their aliases as quick-filter pills.
   const memberFilterAliases = (() => {

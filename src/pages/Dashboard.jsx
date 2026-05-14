@@ -1,5 +1,6 @@
 import { membershipTiers } from '../data/fakeData'
 import { useNavigate } from 'react-router-dom'
+import { byNewest } from '../ledger'
 
 export default function Dashboard({ currentMember, pledgePayments, extraPayments, currentBalance, membershipPlans }) {
   const navigate = useNavigate()
@@ -44,7 +45,7 @@ export default function Dashboard({ currentMember, pledgePayments, extraPayments
   // Show every outstanding pledge, newest first.
   const outstandingPledges = unpaidPledges
     .slice()
-    .sort((a, b) => new Date(b.date) - new Date(a.date))
+    .sort(byNewest)
 
   const isMember = currentMember.membershipType && membershipTiers[currentMember.membershipType]
   const tier = isMember ? membershipTiers[currentMember.membershipType] : null

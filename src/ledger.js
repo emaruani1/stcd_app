@@ -86,6 +86,23 @@ export function withRunningBalance(transactions) {
 }
 
 /**
+ * Comparator for "newest first" sorting across any ledger-style record
+ * (transactions, pledges, emails, etc.). Prefers `createdAt` (full ISO
+ * timestamp set at insert time) so same-day items still order correctly;
+ * falls back to `date` (YYYY-MM-DD) for legacy rows missing createdAt.
+ * Empty strings sort last. Use as `arr.sort(byNewest)`.
+ */
+export function byNewest(a, b) {
+  const ka = a.createdAt || a.date || ''
+  const kb = b.createdAt || b.date || ''
+  if (ka === kb) return 0
+  if (!ka) return 1
+  if (!kb) return -1
+  return kb < ka ? -1 : 1
+}
+
+
+/**
  * Distinguish a gateway decline from an admin-cancellation on a canceled row.
  * `cancellationReason` starting with "Declined:" is stamped by charge_saved_card
  * when Sola returns a decline; `gatewayResult === 'D'` is the gateway's own

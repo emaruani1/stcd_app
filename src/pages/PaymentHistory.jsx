@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { withRunningBalance, balanceImpact, neutralReason, paymentTypeLabel, formatAttribution, cancelKind } from '../ledger'
+import { withRunningBalance, balanceImpact, neutralReason, paymentTypeLabel, formatAttribution, cancelKind, byNewest } from '../ledger'
 
 // eslint-disable-next-line no-unused-vars
 export default function PaymentHistory({ currentMember, pledgePayments, extraPayments, adminTransactions }) {
@@ -25,7 +25,7 @@ export default function PaymentHistory({ currentMember, pledgePayments, extraPay
 
   // Newest-first for the displayed payments list
   const allPayments = useMemo(
-    () => [...annotatedAll].sort((a, b) => new Date(b.date) - new Date(a.date)),
+    () => [...annotatedAll].sort(byNewest),
     [annotatedAll],
   )
 

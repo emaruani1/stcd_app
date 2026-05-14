@@ -2,6 +2,7 @@ import { useState, Fragment } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { membershipTiers } from '../../data/fakeData'
 import * as api from '../../api'
+import { byNewest } from '../../ledger'
 
 export default function AdminMembers({ allMembers, setAllMembers, memberBalances, adminTransactions, refreshData, onImpersonate }) {
   const navigate = useNavigate()
@@ -506,7 +507,7 @@ export default function AdminMembers({ allMembers, setAllMembers, memberBalances
                                 </thead>
                                 <tbody>
                                   {[...m.paymentHistory, ...getAdminTxns(m.id)]
-                                    .sort((a, b) => new Date(b.date) - new Date(a.date))
+                                    .sort(byNewest)
                                     .slice(0, 10)
                                     .map((p, idx) => (
                                     <tr key={p.id || idx} style={p.canceled ? { background: '#fef2f2' } : undefined}>

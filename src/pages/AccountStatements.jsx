@@ -68,7 +68,10 @@ export default function AccountStatements({
   )
 
   const filtered = useMemo(() => {
-    return annotatedAll.filter(t => {
+    // Annotation pass needs oldest-first so runningBalance accumulates correctly.
+    // Display ordering is newest-first per the app-wide convention; reversing
+    // a non-mutating copy keeps each row's runningBalance value intact.
+    const rows = annotatedAll.filter(t => {
       if (typeFilters.length && !typeFilters.includes(t.paymentType)) return false
       if (startDate) {
         const td = new Date(t.date + 'T00:00:00')
@@ -84,6 +87,7 @@ export default function AccountStatements({
       }
       return true
     })
+    return [...rows].reverse()
   }, [annotatedAll, typeFilters, aliasFilter, startDate, endDate])
 
   const totals = useMemo(() => {
