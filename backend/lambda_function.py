@@ -1557,8 +1557,55 @@ def charge_membership_fee(body):
 
 
 def run_monthly_membership_billing():
-    """
-    Daily idempotent tick (despite the legacy name). For each member with an
+    """Cron entry. Iterates every active tenant in stcd_tenants and runs the
+    per-tenant tick. Synthesises a system actor for each tenant so all
+    downstream `_require_tenant()` calls see the right value; restores the
+    previous claims (or clears them) at the end so a same-container HTTP
+    invocation after the cron isn't poisoned with stale tenant context."""
+    try:
+        scan = tenants_table.scan()
+    except Exception as e:
+        print(f'[cron] failed to scan stcd_tenants: {e}')
+        return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
+
+    all_summaries = {}
+    saved_claims = _current_event.get('_verified_claims')
+    try:
+        for t in scan.get('Items', []):
+            tid = t.get('tenantId')
+            if not tid:
+                continue
+            if (t.get('status') or 'active') != 'active':
+                all_summaries[tid] = {'skipped': 'tenant inactive'}
+                continue
+            _current_event['_verified_claims'] = {
+                'email': 'system',
+                'custom:custom:role': 'system',
+                'custom:custom:memberId': '',
+                'custom:custom:tenantId': tid,
+                'custom:custom:isSuperadmin': '',
+                'sub': 'system-cron',
+            }
+            try:
+                all_summaries[tid] = _run_monthly_membership_billing_for_current_tenant()
+            except Exception as e:
+                print(f'[cron] tenant {tid} failed: {e}')
+                all_summaries[tid] = {'error': str(e)}
+    finally:
+        if saved_claims is None:
+            _current_event.pop('_verified_claims', None)
+        else:
+            _current_event['_verified_claims'] = saved_claims
+
+    print(f"[daily billing] {all_summaries}")
+    return {'statusCode': 200, 'body': json.dumps({'tenants': all_summaries}, default=_json_default)}
+
+
+def _run_monthly_membership_billing_for_current_tenant():
+    """Per-tenant tick. Caller must have stamped `_current_event` claims so
+    `_require_tenant()` returns the target tenant. Returns a summary dict.
+
+    Daily idempotent (despite the legacy name). For each member with an
     active plan, creates a membership-fee charge row only if today's day of
     the month matches the member's billingDayOfMonth (default 1). End-of-month
     edge: if a member's billing day is later than the current month's last
@@ -1652,8 +1699,7 @@ def run_monthly_membership_billing():
         _txn_put(charge_txn)
         summary['fees_created'] += 1
 
-    print(f"[daily billing] day={today_day} {summary}")
-    return {'statusCode': 200, 'body': json.dumps(summary)}
+    return summary
 
 
 def update_transaction(body):
@@ -2459,8 +2505,37 @@ def create_email(body):
 
 # ===================== COGNITO USER MANAGEMENT =====================
 
+def _cognito_get_user_tenant(username):
+    """Read a user's custom:tenantId attribute. Pre-Phase-0 users have no
+    value (AWS won't let us backfill the immutable schema attr), so we apply
+    the same transition rule as _get_actor and default to 'stcd'. Returns
+    None if the user doesn't exist at all."""
+    try:
+        u = cognito.admin_get_user(UserPoolId=COGNITO_POOL_ID, Username=username)
+    except cognito.exceptions.UserNotFoundException:
+        return None
+    attrs = {a['Name']: a['Value'] for a in u.get('UserAttributes', [])}
+    return (attrs.get('custom:custom:tenantId') or '').strip() or 'stcd'
+
+
+def _assert_cognito_user_in_tenant(username):
+    """Belt-and-braces guard for admin operations on Cognito users.
+    Returns a respond() to short-circuit the handler, or None to proceed.
+    Superadmins bypass."""
+    if _is_superadmin():
+        return None
+    user_tenant = _cognito_get_user_tenant(username)
+    if user_tenant is None:
+        return respond(404, {'error': 'User not found'})
+    if user_tenant != _require_tenant():
+        return _forbid('Cross-tenant access denied')
+    return None
+
+
 def cognito_lookup_user(body):
-    """Look up a Cognito user by email. Returns user info or {found: false}."""
+    """Look up a Cognito user by email. Returns user info or {found: false}.
+    Cross-tenant lookups are silently masked as 'not found' so an admin can't
+    enumerate users in other tenants by probing email addresses."""
     if not _is_admin():
         return _forbid()
     email = body.get('email', '').strip()
@@ -2482,6 +2557,9 @@ def cognito_lookup_user(body):
             return respond(200, {'found': False})
         u = users[0]
         attrs = {a['Name']: a['Value'] for a in u.get('Attributes', [])}
+        user_tenant = (attrs.get('custom:custom:tenantId') or '').strip() or 'stcd'
+        if not _is_superadmin() and user_tenant != _require_tenant():
+            return respond(200, {'found': False})
         return respond(200, {
             'found': True,
             'username': u['Username'],
@@ -2513,7 +2591,13 @@ def _resolve_cognito_username(email):
 
 
 def cognito_create_user(body):
-    """Create a Cognito user with the given email. Admin-only."""
+    """Create a Cognito user with the given email. Admin-only.
+
+    Stamps custom:tenantId from the calling admin's claims onto the new user.
+    The attribute is immutable in the pool schema, so this is the only time
+    in the user's lifetime it can be set — binding them to this tenant for
+    good. (Superadmins can pass an explicit tenantId in the body to onboard
+    users into other tenants.)"""
     if not _is_admin():
         return _forbid()
     email = body.get('email', '').strip().lower()
@@ -2521,6 +2605,9 @@ def cognito_create_user(body):
     member_id = body.get('memberId', '')
     if not email:
         return respond(400, {'error': 'email is required'})
+    new_tenant = _require_tenant()
+    if _is_superadmin() and body.get('tenantId'):
+        new_tenant = body['tenantId']
     try:
         result = cognito.admin_create_user(
             UserPoolId=COGNITO_POOL_ID,
@@ -2530,6 +2617,7 @@ def cognito_create_user(body):
                 {'Name': 'email_verified', 'Value': 'true'},
                 {'Name': 'custom:custom:role', 'Value': role},
                 {'Name': 'custom:custom:memberId', 'Value': str(member_id)},
+                {'Name': 'custom:custom:tenantId', 'Value': new_tenant},
             ],
             DesiredDeliveryMediums=['EMAIL'],
         )
@@ -2555,6 +2643,9 @@ def cognito_disable_user(body):
     username = _resolve_cognito_username(email)
     if not username:
         return respond(404, {'error': 'User not found'})
+    guard = _assert_cognito_user_in_tenant(username)
+    if guard:
+        return guard
     try:
         cognito.admin_disable_user(UserPoolId=COGNITO_POOL_ID, Username=username)
         return respond(200, {'message': 'User disabled'})
@@ -2572,6 +2663,9 @@ def cognito_enable_user(body):
     username = _resolve_cognito_username(email)
     if not username:
         return respond(404, {'error': 'User not found'})
+    guard = _assert_cognito_user_in_tenant(username)
+    if guard:
+        return guard
     try:
         cognito.admin_enable_user(UserPoolId=COGNITO_POOL_ID, Username=username)
         return respond(200, {'message': 'User enabled'})
@@ -2589,6 +2683,9 @@ def cognito_reset_password(body):
     username = _resolve_cognito_username(email)
     if not username:
         return respond(404, {'error': 'User not found'})
+    guard = _assert_cognito_user_in_tenant(username)
+    if guard:
+        return guard
     try:
         cognito.admin_reset_user_password(UserPoolId=COGNITO_POOL_ID, Username=username)
         return respond(200, {'message': 'Password reset email sent'})
@@ -2610,6 +2707,9 @@ def cognito_resend_invite(body):
     username = _resolve_cognito_username(email)
     if not username:
         return respond(404, {'error': 'User not found'})
+    guard = _assert_cognito_user_in_tenant(username)
+    if guard:
+        return guard
     try:
         cognito.admin_create_user(
             UserPoolId=COGNITO_POOL_ID,
@@ -2637,6 +2737,9 @@ def cognito_update_role(body):
     username = _resolve_cognito_username(email)
     if not username:
         return respond(404, {'error': 'User not found'})
+    guard = _assert_cognito_user_in_tenant(username)
+    if guard:
+        return guard
     try:
         cognito.admin_update_user_attributes(
             UserPoolId=COGNITO_POOL_ID,
