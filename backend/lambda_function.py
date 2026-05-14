@@ -811,7 +811,22 @@ def lambda_handler(event, context):
         return respond(404, {'error': f'Not found: {method} {path}'})
 
     except Exception as e:
-        print(f"Error: {e}")
+        # Structured log so CloudWatch Logs Insights can filter ops alerts
+        # per-tenant — `fields @message | filter tenantId = 'stcd'` etc.
+        # We don't fail the handler if claims aren't loaded yet (a few
+        # routes throw before _verified_claims is set).
+        try:
+            actor = _get_actor()
+            tid = actor.get('tenantId') or ''
+        except Exception:
+            tid = ''
+        print(json.dumps({
+            'level': 'error',
+            'tenantId': tid,
+            'method': method,
+            'path': path,
+            'error': str(e),
+        }))
         return respond(500, {'error': str(e)})
 
 
