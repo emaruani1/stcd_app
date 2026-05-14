@@ -10,9 +10,10 @@ export default function AdminMerge({
 }) {
   const [searchParams] = useSearchParams()
   const preselected = searchParams.get('member')
+  const preselectedSecondary = searchParams.get('secondary')
 
   const [primaryId, setPrimaryId] = useState(preselected || '')
-  const [secondaryId, setSecondaryId] = useState('')
+  const [secondaryId, setSecondaryId] = useState(preselectedSecondary || '')
   const [precedence, setPrecedence] = useState('primary')
   const [showConfirm, setShowConfirm] = useState(false)
   const [toast, setToast] = useState('')

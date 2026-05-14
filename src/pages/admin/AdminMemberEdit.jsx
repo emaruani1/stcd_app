@@ -428,7 +428,7 @@ export default function AdminMemberEdit({ allMembers, refreshData, membershipPla
             ))}
             {' '}&mdash;{' '}
             <button
-              onClick={() => navigate(`/admin/merge?member=${member.id}`)}
+              onClick={() => navigate(`/admin/merge?member=${member.id}&secondary=${dupes[0].id}`)}
               style={{
                 background: 'none', border: 'none', color: '#856404', cursor: 'pointer',
                 textDecoration: 'underline', fontWeight: 600, padding: 0, fontSize: 'inherit',

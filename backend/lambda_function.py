@@ -706,7 +706,7 @@ def lambda_handler(event, context):
             return create_transaction(parse_body(event))
         if path == '/transactions/cancel' and method == 'POST':
             return cancel_transaction(parse_body(event))
-        if path.startswith('/transactions/') and method == 'PUT':
+        if (path == '/transactions' or path.startswith('/transactions/')) and method == 'PUT':
             return update_transaction(parse_body(event))
         if path.startswith('/transactions/') and method == 'DELETE':
             return delete_transaction(parse_body(event))
