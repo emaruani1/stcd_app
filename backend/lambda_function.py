@@ -1700,6 +1700,16 @@ def update_transaction(body):
             ExpressionAttributeValues=expr_values,
         )
 
+    # Keep linked pledge.paidAmount in sync with the ledger. Covers amount
+    # edits, paymentType flips, and pledgeId reassignments.
+    old_pledge_id = existing.get('pledgeId') if existing.get('paymentType') == 'pledge' else ''
+    new_ptype = update_fields.get('paymentType', existing.get('paymentType', ''))
+    new_pledge_id = update_fields.get('pledgeId', existing.get('pledgeId', ''))
+    if old_pledge_id:
+        _recompute_pledge_paid(member_id, old_pledge_id)
+    if new_ptype == 'pledge' and new_pledge_id and new_pledge_id != old_pledge_id:
+        _recompute_pledge_paid(member_id, new_pledge_id)
+
     return respond(200, {'message': 'Transaction updated'})
 
 
@@ -1752,6 +1762,13 @@ def cancel_transaction(body):
             ':ca': now,
         },
     )
+
+    # If this was a pledge payment, recompute the linked pledge so its
+    # outstanding goes back up to reflect the canceled payment.
+    canceled = _txn_get(member_id, txn_id) or {}
+    if canceled.get('paymentType') == 'pledge' and canceled.get('pledgeId'):
+        _recompute_pledge_paid(member_id, canceled['pledgeId'])
+
     return respond(200, {'message': 'Transaction canceled'})
 
 
@@ -1993,6 +2010,34 @@ def update_pledge(body):
                 )
 
     return respond(200, {'message': 'Pledge updated'})
+
+
+def _recompute_pledge_paid(member_id, pledge_id):
+    """Recompute a pledge's paidAmount from the live sum of its non-canceled
+    'pledge' payment transactions and re-stamp the `paid` flag. Called after
+    a pledge-linked txn is edited or canceled so the pledge's outstanding
+    stays in sync with the ledger."""
+    if not pledge_id:
+        return
+    pledge = _pledge_get(member_id, pledge_id)
+    if not pledge:
+        return
+    total = Decimal('0')
+    for t in _all_member_transactions(member_id):
+        if t.get('canceled'):
+            continue
+        if t.get('paymentType') != 'pledge':
+            continue
+        if t.get('pledgeId') != pledge_id:
+            continue
+        total += Decimal(str(t.get('amount', 0)))
+    pledge_amount = Decimal(str(pledge.get('amount', 0)))
+    is_paid = pledge_amount > 0 and total >= pledge_amount
+    _pledge_update(
+        member_id, pledge_id,
+        UpdateExpression='SET paidAmount = :p, paid = :ip',
+        ExpressionAttributeValues={':p': total, ':ip': is_paid},
+    )
 
 
 def pay_pledge(body):
