@@ -99,20 +99,41 @@ export default function AdminPledges({
 
     const fees = (member.paymentHistory || []).filter(t => t.paymentType === 'sponsorship-fee')
     const sponsorshipPayments = (member.paymentHistory || []).filter(t => t.paymentType === 'sponsorship-payment' && !t.canceled)
-    const paidPairIds = new Set(sponsorshipPayments.map(t => t.pairId).filter(Boolean))
-    const settledFeeIds = new Set(sponsorshipPayments.map(t => t.settlesTxnId).filter(Boolean))
+
+    // Build feeId -> total paid map by summing every non-canceled
+    // sponsorship-payment that points at that fee — either via settlesTxnId
+    // (admin settle-fee flow) or via shared pairId (atomic charge-pair flow).
+    // The fee is only "fully paid" when paidAmount >= fee.amount; partial
+    // payments leave it on the table with a reduced outstanding.
+    const paidByFeeId = new Map()
+    const paidByPairId = new Map()
+    for (const p of sponsorshipPayments) {
+      const amt = Number(p.amount) || 0
+      if (p.settlesTxnId) {
+        paidByFeeId.set(p.settlesTxnId, (paidByFeeId.get(p.settlesTxnId) || 0) + amt)
+      }
+      if (p.pairId) {
+        paidByPairId.set(p.pairId, (paidByPairId.get(p.pairId) || 0) + amt)
+      }
+    }
+
     const sponsorshipRows = fees
-      .filter(f => {
-        // A fee is settled if either:
-        //   - its pairId appears on a sponsorship-payment (member-paid via card), OR
-        //   - some sponsorship-payment has settlesTxnId pointing at this fee (admin
-        //     marked paid through the new settle-fee endpoint)
-        if (f.pairId && paidPairIds.has(f.pairId)) return false
-        if (settledFeeIds.has(f.id)) return false
+      .map(f => {
+        const feeAmount = Number(f.amount) || 0
+        const paidViaSettle = paidByFeeId.get(f.id) || 0
+        const paidViaPair = (f.pairId && paidByPairId.get(f.pairId)) || 0
+        // A payment carries either pairId OR settlesTxnId, never both, so
+        // summing both buckets won't double-count.
+        const paidAmount = paidViaSettle + paidViaPair
+        const fullyPaid = feeAmount > 0 && paidAmount >= feeAmount
+        return { f, feeAmount, paidAmount, fullyPaid }
+      })
+      .filter(({ f, fullyPaid }) => {
+        if (fullyPaid) return false
         if (f.canceled && !showCanceled) return false
         return true
       })
-      .map(f => ({
+      .map(({ f, feeAmount, paidAmount }) => ({
         kind: 'sponsorship',
         id: f.id,
         memberId: member.id,
@@ -120,8 +141,8 @@ export default function AdminPledges({
         description: f.description || (f.category ? `${f.category} sponsorship` : 'Sponsorship'),
         pledgeType: '',
         occasion: '',
-        amount: Number(f.amount) || 0,
-        paidAmount: 0,
+        amount: feeAmount,
+        paidAmount,
         date: f.date || '',
         paid: false,
         canceled: f.canceled || false,
