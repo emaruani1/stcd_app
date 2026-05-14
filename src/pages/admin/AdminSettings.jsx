@@ -734,19 +734,60 @@ export default function AdminSettings({
             </div>
 
             <h2 className="section-title" style={{ marginTop: '2rem' }}>Theme colors</h2>
-            <div className="form-row">
-              <div className="form-group">
-                <label>Primary</label>
-                <input type="color" value={d.primaryColor || '#1a365d'} onChange={e => setField('primaryColor', e.target.value)} />
-              </div>
-              <div className="form-group">
-                <label>Secondary</label>
-                <input type="color" value={d.secondaryColor || '#2a4a7f'} onChange={e => setField('secondaryColor', e.target.value)} />
-              </div>
-              <div className="form-group">
-                <label>Accent</label>
-                <input type="color" value={d.accentColor || '#c6973f'} onChange={e => setField('accentColor', e.target.value)} />
-              </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+              {[
+                { key: 'primaryColor', label: 'Primary', fallback: '#1a365d' },
+                { key: 'secondaryColor', label: 'Secondary', fallback: '#2a4a7f' },
+                { key: 'accentColor', label: 'Accent', fallback: '#c6973f' },
+              ].map(({ key, label, fallback }) => {
+                const value = d[key] || fallback
+                return (
+                  <div key={key} style={{
+                    background: 'var(--bg-warm)',
+                    padding: '1rem',
+                    borderRadius: 'var(--radius-md)',
+                  }}>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.5rem' }}>{label}</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                      <label style={{
+                        position: 'relative',
+                        display: 'inline-block',
+                        width: 48,
+                        height: 48,
+                        borderRadius: 8,
+                        background: value,
+                        border: '1px solid rgba(0,0,0,0.15)',
+                        cursor: 'pointer',
+                        flexShrink: 0,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
+                      }}>
+                        <input
+                          type="color"
+                          value={value}
+                          onChange={e => setField(key, e.target.value)}
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            opacity: 0,
+                            width: '100%',
+                            height: '100%',
+                            border: 'none',
+                            padding: 0,
+                            cursor: 'pointer',
+                          }}
+                        />
+                      </label>
+                      <input
+                        type="text"
+                        value={value}
+                        onChange={e => setField(key, e.target.value)}
+                        spellCheck={false}
+                        style={{ fontFamily: 'monospace', fontSize: '0.9rem', textTransform: 'uppercase', flex: 1 }}
+                      />
+                    </div>
+                  </div>
+                )
+              })}
             </div>
 
             <h2 className="section-title" style={{ marginTop: '2rem' }}>Email</h2>
