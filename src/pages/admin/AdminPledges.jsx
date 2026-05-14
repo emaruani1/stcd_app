@@ -205,9 +205,9 @@ export default function AdminPledges({
     setSelectedPledge(row)
     setSelectedMemberId(mId)
     setPaymentMethod(paymentMethods[0]?.label || 'Cash')
-    const remaining = row.kind === 'sponsorship'
-      ? row.amount
-      : row.amount - row.paidAmount
+    // Both sponsorship fees and pledges now carry a real paidAmount, so the
+    // default payment amount is the unpaid remainder in both cases.
+    const remaining = row.amount - (row.paidAmount || 0)
     setPayAmount(String(remaining))
     setPayDate(new Date().toISOString().split('T')[0])
     setShowPayModal(true)
@@ -317,9 +317,9 @@ export default function AdminPledges({
   const handleOpenCharge = async (row, mId) => {
     setSelectedPledge(row)
     setSelectedMemberId(mId)
-    const remaining = row.kind === 'sponsorship'
-      ? row.amount
-      : row.amount - row.paidAmount
+    // Both sponsorship fees and pledges now carry a real paidAmount, so the
+    // default charge amount is the unpaid remainder in both cases.
+    const remaining = row.amount - (row.paidAmount || 0)
     setChargeAmount(remaining > 0 ? String(remaining) : '')
     setChargeDescription(row.description || (row.kind === 'sponsorship' ? 'Sponsorship' : 'Pledge'))
     setChargeAlias(row.alias || '')
@@ -873,6 +873,23 @@ export default function AdminPledges({
             <button className="modal-close" onClick={() => setShowPayModal(false)}>&times;</button>
             <h2 className="modal-title">Record Payment</h2>
             <div className="modal-body">
+              {/* Settle-target banner — same affordance as the card-charge
+                  modal so admins confirm which fee/pledge they're paying. */}
+              <div style={{
+                background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-sm)',
+                padding: '12px 14px', marginBottom: 14, fontSize: '0.88rem',
+              }}>
+                <div style={{ fontWeight: 700, color: '#78350f', marginBottom: 4 }}>
+                  Settling {selectedPledge.kind === 'sponsorship' ? 'sponsorship fee' : 'pledge'}: {selectedPledge.description}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#92400e' }}>
+                  <span style={{ fontFamily: 'monospace' }}>ID …{String(selectedPledge.id).slice(-12)}</span>
+                  {' · '}Member {selectedPledge.memberName}
+                  {selectedPledge.paidAmount > 0 && (
+                    <>{' · '}${selectedPledge.paidAmount.toLocaleString()} already paid</>
+                  )}
+                </div>
+              </div>
               <div className="modal-total">
                 <span>{selectedPledge.description}</span>
                 <span>${(selectedPledge.amount - selectedPledge.paidAmount).toLocaleString()} remaining</span>
@@ -1023,13 +1040,31 @@ export default function AdminPledges({
               Charge Card — {selectedPledge.memberName}
             </h2>
             <div className="modal-body">
+              {/* Settle-target banner — surfaces which fee/pledge this charge
+                  will apply to so the admin can spot a wrong-row click before
+                  any money moves. */}
+              <div style={{
+                background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-sm)',
+                padding: '12px 14px', marginBottom: 14, fontSize: '0.88rem',
+              }}>
+                <div style={{ fontWeight: 700, color: '#78350f', marginBottom: 4 }}>
+                  Settling {selectedPledge.kind === 'sponsorship' ? 'sponsorship fee' : 'pledge'}: {selectedPledge.description}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#92400e' }}>
+                  <span style={{ fontFamily: 'monospace' }}>ID …{String(selectedPledge.id).slice(-12)}</span>
+                  {' · '}Member {selectedPledge.memberName}
+                  {selectedPledge.paidAmount > 0 && (
+                    <>{' · '}${selectedPledge.paidAmount.toLocaleString()} already paid</>
+                  )}
+                </div>
+              </div>
               <div className="modal-total">
                 <span>{selectedPledge.description}</span>
                 <span>
                   ${(selectedPledge.kind === 'sponsorship'
-                    ? selectedPledge.amount
+                    ? selectedPledge.amount - selectedPledge.paidAmount
                     : selectedPledge.amount - selectedPledge.paidAmount
-                  ).toLocaleString()} {selectedPledge.kind === 'sponsorship' ? 'due' : 'remaining'}
+                  ).toLocaleString()} remaining
                 </span>
               </div>
 
