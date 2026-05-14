@@ -113,6 +113,25 @@ export default function AdminTransactions({
     return [...fromMembers, ...fromAdmin].sort(byNewest)
   }, [allMembers, adminTransactions, products])
 
+  // Lookup table for resolving settlesTxnId → the fee row's description.
+  // Lets us show a "Settles: <fee description>" line on the payment row so
+  // the link between a payment and the fee it pays off is visible at a glance.
+  const txnById = useMemo(() => {
+    const m = new Map()
+    for (const t of allTransactions) m.set(t.id, t)
+    return m
+  }, [allTransactions])
+
+  // Same idea for pledgeId → pledge description so pledge-payment rows can
+  // show what they pay against.
+  const pledgeById = useMemo(() => {
+    const m = new Map()
+    for (const member of allMembers) {
+      for (const p of (member.pledges || [])) m.set(p.id, p)
+    }
+    return m
+  }, [allMembers])
+
   // Show every transaction the member has, regardless of how it was recorded.
   // Card-processor results (Approved / Declined / Error) sit alongside manual
   // ledger entries (cash, check, mark-paid) which derive a "Recorded" status.
@@ -383,6 +402,34 @@ export default function AdminTransactions({
                       <td data-col="date">{formatDate(t.date)}</td>
                       <td data-col="description">
                         {t.description}
+                        {(() => {
+                          // Show settle-link / pledge-link so the chain
+                          // between a payment and the fee or pledge it pays
+                          // is visible without crawling the data manually.
+                          if (t.settlesTxnId) {
+                            const fee = txnById.get(t.settlesTxnId)
+                            const label = fee
+                              ? fee.description || '(fee with no description)'
+                              : 'fee not found — orphan settle link'
+                            return (
+                              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                                ↪ Settles fee: <span style={{ fontFamily: 'monospace' }}>{t.settlesTxnId.slice(-12)}</span> — {label}
+                              </div>
+                            )
+                          }
+                          if (t.pledgeId) {
+                            const pledge = pledgeById.get(t.pledgeId)
+                            const label = pledge
+                              ? (pledge.description || pledge.pledgeType || 'Pledge')
+                              : 'pledge not found'
+                            return (
+                              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                                ↪ Pledge: <span style={{ fontFamily: 'monospace' }}>{t.pledgeId.slice(-12)}</span> — {label}
+                              </div>
+                            )
+                          }
+                          return null
+                        })()}
                         {(t.gatewayError || t.gatewayErrorCode) && (() => {
                           const friendly = gatewayFriendlyReason(t)
                           return (
