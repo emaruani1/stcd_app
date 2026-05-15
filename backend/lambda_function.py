@@ -19,7 +19,9 @@ from botocore.exceptions import ClientError
 dynamodb = boto3.resource('dynamodb')
 cognito = boto3.client('cognito-idp')
 s3 = boto3.client('s3', region_name='us-east-2')
+ssm = boto3.client('ssm', region_name='us-east-2')
 TENANT_ASSETS_BUCKET = os.environ.get('TENANT_ASSETS_BUCKET', 'stcd-saas-tenant-assets-574630139917')
+SSM_TENANT_PREFIX = '/stcd/tenants'
 members_table = dynamodb.Table(os.environ.get('MEMBERS_TABLE', 'stcd_members'))
 transactions_table = dynamodb.Table(os.environ.get('TRANSACTIONS_TABLE', 'stcd_transactions'))
 pledges_table = dynamodb.Table(os.environ.get('PLEDGES_TABLE', 'stcd_pledges'))
@@ -2888,16 +2890,20 @@ def get_tenant_me():
     """Return the caller's tenant row with private credentials stripped.
     Available to any authenticated user in the tenant. Includes a 1-hour
     presigned `logoUrl` so the frontend can render the logo without the
-    S3 bucket being public. solaXKey is **never** returned; instead we
-    emit `solaXKeyLast4` so the Settings UI can show a "•••• 7894" hint
-    confirming a key is on file without ever exposing the full secret."""
+    S3 bucket being public. solaXKey is **never** returned (lives only in
+    SSM Parameter Store SecureString); the UI sees `solaXKeyLast4` and
+    `solaXKeyConfigured` hints instead."""
     tenant_id = _require_tenant()
+    # Force the SSM migration side effect if a legacy plaintext xKey is
+    # still on the row, so a fresh GET clears it immediately. Charging
+    # would have done this on the next sale; we don't want admins to see
+    # the row still hold plaintext while waiting for a charge to happen.
+    _get_tenant_sola_xkey(tenant_id)
     tenant = _load_tenant(tenant_id) or {}
     out = {k: v for k, v in tenant.items() if k in _TENANT_PUBLIC_FIELDS}
     out['logoUrl'] = _presigned_logo_url(tenant.get('logoS3Key'))
-    raw_key = (tenant.get('solaXKey') or '').strip()
-    out['solaXKeyLast4'] = raw_key[-4:] if len(raw_key) >= 4 else ''
-    out['solaXKeyConfigured'] = bool(raw_key)
+    out['solaXKeyLast4']    = tenant.get('solaXKeyLast4', '') or ''
+    out['solaXKeyConfigured'] = bool(tenant.get('solaXKeyConfigured'))
     return respond(200, out)
 
 
@@ -2957,8 +2963,21 @@ def update_tenant_me(body):
                 updates[secret] = ''
             else:
                 updates[secret] = v
+
+    # Sola xKey lives in SSM Parameter Store SecureString, never in
+    # DynamoDB. Handle it out-of-band so the plaintext key never appears
+    # in the regular update_item write.
+    if 'solaXKey' in updates:
+        new_xkey = updates.pop('solaXKey')
+        try:
+            _put_tenant_sola_xkey(tenant_id, new_xkey)
+        except Exception as e:
+            return respond(500, {'error': f'Failed to store xKey: {e}'})
+
     if not updates:
-        return respond(400, {'error': 'No editable fields in request'})
+        # The xKey-only update path doesn't need a tenants_table.update_item
+        # call (handled above), so just return the fresh tenant view.
+        return get_tenant_me()
     expr_parts, expr_names, expr_values = [], {}, {}
     for k, v in updates.items():
         safe = f"#{k}"
@@ -2998,6 +3017,95 @@ def get_tenant_payment_config():
     })
 
 
+# Warm-container cache for resolved Sola xKeys. SSM costs are tiny but
+# Lambda cold starts already pay ~30ms for a single GetParameter; we
+# avoid it for the rest of the container's life by caching post-resolve.
+# Bust on writes.
+_xkey_cache = {}
+
+
+def _xkey_ssm_name(tenant_id):
+    return f'{SSM_TENANT_PREFIX}/{tenant_id}/solaXKey'
+
+
+def _get_tenant_sola_xkey(tenant_id):
+    """Resolve the tenant's Sola xKey from SSM Parameter Store SecureString.
+    Auto-migrates legacy values still living on the stcd_tenants row to
+    SSM the first time we resolve them, then clears the plaintext from
+    DynamoDB so it never sits there again. Cached for the warm container.
+    Returns '' if no key is configured anywhere."""
+    if not tenant_id:
+        return ''
+    cached = _xkey_cache.get(tenant_id)
+    if cached is not None:
+        return cached
+    name = _xkey_ssm_name(tenant_id)
+    try:
+        v = ssm.get_parameter(Name=name, WithDecryption=True).get('Parameter', {}).get('Value', '')
+        if v:
+            _xkey_cache[tenant_id] = v
+            return v
+    except ssm.exceptions.ParameterNotFound:
+        pass
+    except Exception as e:
+        print(f'[xkey] SSM read failed for {tenant_id}: {e}')
+    # Fall back to legacy plaintext on the DynamoDB row, migrate on first read.
+    tenant = _load_tenant(tenant_id) or {}
+    legacy_key = (tenant.get('solaXKey') or '').strip()
+    if not legacy_key:
+        _xkey_cache[tenant_id] = ''
+        return ''
+    try:
+        ssm.put_parameter(
+            Name=name, Value=legacy_key, Type='SecureString', Overwrite=True,
+            Description=f'Sola merchant xKey for tenant {tenant_id}',
+        )
+        # Clear the plaintext from DynamoDB; keep the last-4 + configured
+        # flag so the Settings UI hint still works without the secret.
+        tenants_table.update_item(
+            Key={'tenantId': tenant_id},
+            UpdateExpression='SET solaXKey = :empty, solaXKeyLast4 = :l4, solaXKeyConfigured = :c',
+            ExpressionAttributeValues={':empty': '', ':l4': legacy_key[-4:], ':c': True},
+        )
+        _bust_tenant_cache(tenant_id)
+        print(json.dumps({'level': 'info', 'event': 'sola_xkey_migrated_to_ssm', 'tenantId': tenant_id}))
+    except Exception as e:
+        # Migration failure shouldn't break charges — use the legacy value
+        # this call and retry on the next cold container.
+        print(f'[xkey] migration to SSM failed for {tenant_id}: {e}')
+    _xkey_cache[tenant_id] = legacy_key
+    return legacy_key
+
+
+def _put_tenant_sola_xkey(tenant_id, new_key):
+    """Write or rotate the tenant's xKey. Stores in SSM only; the
+    DynamoDB row gets the last-4 + configured-flag hint. Empty string
+    deletes the parameter (admin explicitly unsetting the credential)."""
+    name = _xkey_ssm_name(tenant_id)
+    if new_key:
+        ssm.put_parameter(
+            Name=name, Value=new_key, Type='SecureString', Overwrite=True,
+            Description=f'Sola merchant xKey for tenant {tenant_id}',
+        )
+        tenants_table.update_item(
+            Key={'tenantId': tenant_id},
+            UpdateExpression='SET solaXKey = :empty, solaXKeyLast4 = :l4, solaXKeyConfigured = :c',
+            ExpressionAttributeValues={':empty': '', ':l4': new_key[-4:], ':c': True},
+        )
+    else:
+        try:
+            ssm.delete_parameter(Name=name)
+        except ssm.exceptions.ParameterNotFound:
+            pass
+        tenants_table.update_item(
+            Key={'tenantId': tenant_id},
+            UpdateExpression='SET solaXKey = :empty, solaXKeyLast4 = :empty, solaXKeyConfigured = :c',
+            ExpressionAttributeValues={':empty': '', ':c': False},
+        )
+    _xkey_cache.pop(tenant_id, None)
+    _bust_tenant_cache(tenant_id)
+
+
 def _sola_post(payload):
     """POST to the Sola Transaction API using the current tenant's credentials.
     Returns (ok, response_dict).
@@ -3009,7 +3117,7 @@ def _sola_post(payload):
     the tenant row or the call fails closed)."""
     tenant_id = _require_tenant()
     tenant = _load_tenant(tenant_id) or {}
-    x_key = (tenant.get('solaXKey') or '').strip()
+    x_key = _get_tenant_sola_xkey(tenant_id)
     if not x_key:
         return False, {'xResult': 'E', 'xError': f'Tenant {tenant_id} has no Sola xKey configured', 'xErrorCode': 'CONFIG'}
     gateway_url = (tenant.get('solaGatewayUrl') or '').strip() or SOLA_GATEWAY_URL
