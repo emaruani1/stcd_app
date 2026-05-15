@@ -21,6 +21,11 @@ cognito = boto3.client('cognito-idp')
 s3 = boto3.client('s3', region_name='us-east-2')
 ssm = boto3.client('ssm', region_name='us-east-2')
 TENANT_ASSETS_BUCKET = os.environ.get('TENANT_ASSETS_BUCKET', 'stcd-saas-tenant-assets-574630139917')
+# CloudFront distribution in front of the tenant assets bucket. Bucket is
+# private; access is gated by Origin Access Control (OAC) on this exact
+# distribution ARN. Logo URLs returned to the frontend point here so they
+# stay stable across sessions (no hourly presigned-URL churn).
+TENANT_ASSETS_CDN = os.environ.get('TENANT_ASSETS_CDN', 'https://d3fg8gqx8vufpg.cloudfront.net')
 SSM_TENANT_PREFIX = '/stcd/tenants'
 members_table = dynamodb.Table(os.environ.get('MEMBERS_TABLE', 'stcd_members'))
 transactions_table = dynamodb.Table(os.environ.get('TRANSACTIONS_TABLE', 'stcd_transactions'))
@@ -218,6 +223,23 @@ def _verify_jwt(authorization_header):
     return claims
 
 
+# Sub IDs of the 3 pre-Phase-0 STCD Cognito users that pre-date the
+# `custom:tenantId` schema attribute. Cognito's `Mutable=false` schema
+# means we can't backfill the attribute on them, so we map their sub to
+# 'stcd' explicitly. Any OTHER user with an empty tenantId claim is a
+# bug — they get an empty tenant and fail at the first _require_tenant()
+# call, which is the correct behavior once tenant #2 is onboarded.
+#
+# Delete this set (and the lookup) once these 3 users are deleted and
+# re-created with the attribute stamped (or once the operator decides
+# they're disposable test accounts).
+_LEGACY_STCD_SUBS = {
+    '4cbfeeee-7a2a-4277-b3cf-ced2f5db2e12',  # elimaruani1@gmail.com (admin/operator)
+    '0ff25f91-684f-4277-b2f3-8e3e262bb5f1',  # eliahou.maruani@gmail.com (pledger)
+    'e2bef02e-2e0d-449c-a781-ddf836ca8ea4',  # eli_maruani@hotmail.com (member)
+}
+
+
 def _get_actor():
     """
     Pull the verified user identity captured at lambda_handler entry.
@@ -225,23 +247,26 @@ def _get_actor():
     Empty if unverified (only the EventBridge cron path reaches here without
     verified claims).
 
-    Transition rule for tenantId: pre-Phase-0 users were created before the
-    `custom:tenantId` schema attribute existed (Mutable=false, so AWS won't
-    let us backfill them). Their JWT claim is empty — we default it to 'stcd'
-    so legacy users keep working. New users created post-Phase-0 always get
-    the attribute stamped at admin-create-user time and the immutable schema
-    prevents tampering thereafter. Remove this default once those legacy
-    users are recreated, or when we onboard a second tenant.
+    Transition rule for tenantId: limited to the 3 pre-Phase-0 STCD users
+    listed in _LEGACY_STCD_SUBS. Everyone else's empty tenantId resolves
+    to '' — which fails _require_tenant() at the first route. This is
+    deliberate: post-Phase-2 every new user gets tenantId stamped at
+    cognito_create_user time, so a missing claim is a real bug, not a
+    legacy backfill case.
     """
     claims = _current_event.get('_verified_claims') or {}
     raw_tenant = (claims.get('custom:custom:tenantId', '') or '').strip()
     raw_super = (claims.get('custom:custom:isSuperadmin', '') or '').strip().lower()
+    sub = claims.get('sub', '')
+    tenant_id = raw_tenant
+    if not tenant_id and sub in _LEGACY_STCD_SUBS:
+        tenant_id = 'stcd'
     return {
         'email': claims.get('email', ''),
         'role': claims.get('custom:custom:role', ''),
         'memberId': claims.get('custom:custom:memberId', ''),
-        'sub': claims.get('sub', ''),
-        'tenantId': raw_tenant or 'stcd',
+        'sub': sub,
+        'tenantId': tenant_id,
         'isSuperadmin': raw_super == 'true',
     }
 
@@ -2850,13 +2875,18 @@ def get_public_branding(event):
     match = None
     if host:
         try:
-            scan = tenants_table.scan()
-            for t in scan.get('Items', []):
-                if (t.get('domain') or '').lower() == host:
-                    match = t
-                    break
+            # Query domain-index GSI — O(1) hostname lookup. Scales to
+            # hundreds of tenants without scanning the table.
+            res = tenants_table.query(
+                IndexName='domain-index',
+                KeyConditionExpression=Key('domain').eq(host),
+                Limit=1,
+            )
+            items = res.get('Items', [])
+            if items:
+                match = items[0]
         except Exception as e:
-            print(f'[public-branding] scan failed: {e}')
+            print(f'[public-branding] GSI query failed: {e}')
     if not match:
         match = _load_tenant('stcd') or {}
     safe = {
@@ -2876,19 +2906,17 @@ def get_public_branding(event):
 
 
 def _presigned_logo_url(logo_key):
-    """1-hour presigned GET URL for a tenant's logo. Returns '' when no key
-    is set so the frontend falls back to the bundled default."""
+    """Stable CloudFront URL for a tenant's logo. The bucket is private;
+    OAC on the distribution is the only thing that can read from it, so
+    posting this URL doesn't expose the bucket. Returns '' when no key
+    is set so the frontend falls back to the bundled default.
+
+    (Name retained for source-compat with earlier code that called this
+    helper; the URL is no longer presigned — it's a stable CDN URL that
+    doesn't rotate.)"""
     if not logo_key:
         return ''
-    try:
-        return s3.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': TENANT_ASSETS_BUCKET, 'Key': logo_key},
-            ExpiresIn=3600,
-        )
-    except Exception as e:
-        print(f'[logo] presigned GET failed: {e}')
-        return ''
+    return f'{TENANT_ASSETS_CDN.rstrip("/")}/{logo_key.lstrip("/")}'
 
 
 def get_tenant_me():

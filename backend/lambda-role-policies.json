@@ -1,0 +1,92 @@
+{
+  "_comment": "Inline policies attached to stcd-lambda-role — the Lambda execution role. Source of truth as of 2026-05-15. To resync after manual changes via AWS Console, run `aws iam get-role-policy --role-name stcd-lambda-role --policy-name <name>` for each and replace below. Re-apply via `aws iam put-role-policy --role-name stcd-lambda-role --policy-name <name> --policy-document file://<this file fragment>`.",
+
+  "stcd-lambda-dynamo-policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "TenantDataRW",
+        "Effect": "Allow",
+        "Action": [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "dynamodb:Scan",
+          "dynamodb:BatchGetItem",
+          "dynamodb:BatchWriteItem",
+          "dynamodb:ConditionCheckItem",
+          "dynamodb:DescribeTable"
+        ],
+        "Resource": [
+          "arn:aws:dynamodb:us-east-2:574630139917:table/stcd_*",
+          "arn:aws:dynamodb:us-east-2:574630139917:table/stcd_*/index/*"
+        ]
+      },
+      {
+        "Sid": "LambdaLogs",
+        "Effect": "Allow",
+        "Action": [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ],
+        "Resource": "arn:aws:logs:us-east-2:574630139917:*"
+      }
+    ]
+  },
+
+  "stcd-lambda-cognito-policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "TenantPoolAdmin",
+        "Effect": "Allow",
+        "Action": [
+          "cognito-idp:AdminCreateUser",
+          "cognito-idp:AdminGetUser",
+          "cognito-idp:AdminUpdateUserAttributes",
+          "cognito-idp:AdminDisableUser",
+          "cognito-idp:AdminEnableUser",
+          "cognito-idp:AdminResetUserPassword",
+          "cognito-idp:AdminSetUserMFAPreference",
+          "cognito-idp:ListUsers"
+        ],
+        "Resource": "arn:aws:cognito-idp:us-east-2:574630139917:userpool/us-east-2_Pna4Sv1p8"
+      }
+    ]
+  },
+
+  "stcd-lambda-s3-policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "TenantAssetsRW",
+        "Effect": "Allow",
+        "Action": [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:DeleteObject"
+        ],
+        "Resource": "arn:aws:s3:::stcd-saas-tenant-assets-574630139917/tenants/*"
+      }
+    ]
+  },
+
+  "stcd-lambda-ssm-policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "TenantSecretsRW",
+        "Effect": "Allow",
+        "Action": [
+          "ssm:GetParameter",
+          "ssm:PutParameter",
+          "ssm:DeleteParameter"
+        ],
+        "Resource": "arn:aws:ssm:us-east-2:574630139917:parameter/stcd/tenants/*"
+      }
+    ]
+  }
+}

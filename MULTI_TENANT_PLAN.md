@@ -4,6 +4,8 @@ Audit + remediation plan to convert STCD into a multi-synagogue platform with st
 
 Generated: 2026-05-10. Audit performed against AWS account `574630139917`, region `us-east-2`, profile `stcd`.
 
+**Status as of 2026-05-15: All phases functionally complete.** A second tenant can be onboarded via `backend/onboard_tenant.py` + the Amplify custom-domain playbook in §Phase 6. Items marked ⚠️ are followups noted at the time of writing; ❌ are intentionally out-of-scope and not done by design.
+
 ---
 
 ## Goal
