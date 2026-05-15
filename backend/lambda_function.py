@@ -210,23 +210,6 @@ def _verify_jwt(authorization_header):
     return claims
 
 
-# Sub IDs of the 3 pre-Phase-0 STCD Cognito users that pre-date the
-# `custom:tenantId` schema attribute. Cognito's `Mutable=false` schema
-# means we can't backfill the attribute on them, so we map their sub to
-# 'stcd' explicitly. Any OTHER user with an empty tenantId claim is a
-# bug — they get an empty tenant and fail at the first _require_tenant()
-# call, which is the correct behavior once tenant #2 is onboarded.
-#
-# Delete this set (and the lookup) once these 3 users are deleted and
-# re-created with the attribute stamped (or once the operator decides
-# they're disposable test accounts).
-_LEGACY_STCD_SUBS = {
-    '4cbfeeee-7a2a-4277-b3cf-ced2f5db2e12',  # elimaruani1@gmail.com (admin/operator)
-    '0ff25f91-684f-4277-b2f3-8e3e262bb5f1',  # eliahou.maruani@gmail.com (pledger)
-    'e2bef02e-2e0d-449c-a781-ddf836ca8ea4',  # eli_maruani@hotmail.com (member)
-}
-
-
 def _get_actor():
     """
     Pull the verified user identity captured at lambda_handler entry.
@@ -234,26 +217,20 @@ def _get_actor():
     Empty if unverified (only the EventBridge cron path reaches here without
     verified claims).
 
-    Transition rule for tenantId: limited to the 3 pre-Phase-0 STCD users
-    listed in _LEGACY_STCD_SUBS. Everyone else's empty tenantId resolves
-    to '' — which fails _require_tenant() at the first route. This is
-    deliberate: post-Phase-2 every new user gets tenantId stamped at
-    cognito_create_user time, so a missing claim is a real bug, not a
-    legacy backfill case.
+    Every Cognito user gets `custom:tenantId` stamped immutably at
+    creation (cognito_create_user). A missing tenantId on a real JWT is
+    therefore always a bug, not a legacy backfill case — `_require_tenant`
+    will fail the request at the first route, surfacing the bug
+    immediately instead of silently leaking into the 'stcd' tenant.
     """
     claims = _current_event.get('_verified_claims') or {}
-    raw_tenant = (claims.get('custom:custom:tenantId', '') or '').strip()
     raw_super = (claims.get('custom:custom:isSuperadmin', '') or '').strip().lower()
-    sub = claims.get('sub', '')
-    tenant_id = raw_tenant
-    if not tenant_id and sub in _LEGACY_STCD_SUBS:
-        tenant_id = 'stcd'
     return {
         'email': claims.get('email', ''),
         'role': claims.get('custom:custom:role', ''),
         'memberId': claims.get('custom:custom:memberId', ''),
-        'sub': sub,
-        'tenantId': tenant_id,
+        'sub': claims.get('sub', ''),
+        'tenantId': (claims.get('custom:custom:tenantId', '') or '').strip(),
         'isSuperadmin': raw_super == 'true',
     }
 
