@@ -15,6 +15,37 @@ export default function AdminSettings({
   const [brandingDraft, setBrandingDraft] = useState(null)
   const [savingBranding, setSavingBranding] = useState(false)
   const [logoUploading, setLogoUploading] = useState(false)
+  // Gateway credentials — never pre-filled from the server (the xKey is
+  // redacted server-side). An empty submit is a no-op; only non-empty
+  // values get sent.
+  const [solaXKeyInput, setSolaXKeyInput] = useState('')
+  const [solaIFieldsKeyInput, setSolaIFieldsKeyInput] = useState('')
+  const [savingGateway, setSavingGateway] = useState(false)
+
+  const saveGatewayKeys = async () => {
+    const newX = solaXKeyInput.trim()
+    const newI = solaIFieldsKeyInput.trim()
+    if (!newX && !newI) {
+      showToast('Enter at least one key to update')
+      return
+    }
+    setSavingGateway(true)
+    try {
+      const payload = {}
+      if (newX) payload.solaXKey = newX
+      if (newI) payload.solaIFieldsKey = newI
+      const updated = await api.updateTenant(payload)
+      setTenantLocal(updated)
+      await refreshTenant()
+      setSolaXKeyInput('')
+      setSolaIFieldsKeyInput('')
+      showToast('Payment gateway keys updated')
+    } catch (e) {
+      showToast('Error: ' + e.message)
+    } finally {
+      setSavingGateway(false)
+    }
+  }
 
   // Two-step logo upload: ask the backend for a presigned PUT URL, send the
   // file body straight to S3 (skips the 6 MB Lambda payload limit), then
@@ -809,6 +840,64 @@ export default function AdminSettings({
                 onChange={e => setField('emailFooterSignature', e.target.value)}
                 placeholder="Sephardic Torah Center of Dallas"
               />
+            </div>
+
+            <h2 className="section-title" style={{ marginTop: '2rem' }}>Payment gateway</h2>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+              The Sola xKey routes every charge to your merchant account. The
+              iFields key drives the secure card iframe. Both must come from
+              your Sola dashboard. Saving the rest of the Branding form
+              leaves these untouched — only filled-in fields here get sent.
+            </p>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Sola xKey</label>
+                <input
+                  type="password"
+                  value={solaXKeyInput}
+                  onChange={e => setSolaXKeyInput(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={
+                    tenant.solaXKeyConfigured
+                      ? `Configured · ends in ${tenant.solaXKeyLast4 || '????'} — type to replace`
+                      : 'Not configured — paste new key'
+                  }
+                />
+              </div>
+              <div className="form-group">
+                <label>Sola iFields key</label>
+                <input
+                  type="password"
+                  value={solaIFieldsKeyInput}
+                  onChange={e => setSolaIFieldsKeyInput(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={
+                    tenant.solaIFieldsKey
+                      ? 'Configured — type to replace'
+                      : 'Not configured — paste new key'
+                  }
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+              <button
+                className="pay-btn"
+                onClick={saveGatewayKeys}
+                disabled={savingGateway || (!solaXKeyInput.trim() && !solaIFieldsKeyInput.trim())}
+                style={{ padding: '8px 18px' }}
+              >
+                {savingGateway ? 'Updating...' : 'Update keys'}
+              </button>
+              <button
+                className="modal-btn-secondary"
+                onClick={() => { setSolaXKeyInput(''); setSolaIFieldsKeyInput('') }}
+                disabled={savingGateway}
+                style={{ padding: '8px 18px' }}
+              >
+                Cancel
+              </button>
             </div>
 
             <h2 className="section-title" style={{ marginTop: '2rem' }}>Receipts &amp; statements</h2>

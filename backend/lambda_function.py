@@ -2817,13 +2817,13 @@ _TENANT_PUBLIC_FIELDS = {
     'fromEmail', 'replyToEmail', 'emailFooterSignature', 'taxId', 'address',
     'status', 'createdAt', 'createdBy',
 }
-# Fields admins may edit via PUT /tenants/me. Intentionally excludes solaXKey,
-# tenantId, createdAt/createdBy, status — those are platform-owned, not
-# tenant-owned. solaGatewayUrl / softwareName / softwareVersion are private to
-# operations as well.
+# Fields admins may edit via PUT /tenants/me. Intentionally excludes
+# tenantId, createdAt/createdBy, status — those are platform-owned. solaXKey
+# IS editable (admins need to rotate their own gateway credentials) but is
+# never returned in GET responses; the frontend only sees a last-4 hint.
 _TENANT_ADMIN_EDITABLE = {
     'displayName', 'legalName', 'primaryColor', 'secondaryColor', 'accentColor',
-    'logoS3Key', 'solaIFieldsKey', 'timezone', 'currency', 'fromEmail',
+    'logoS3Key', 'solaIFieldsKey', 'solaXKey', 'timezone', 'currency', 'fromEmail',
     'replyToEmail', 'emailFooterSignature', 'taxId', 'address',
 }
 
@@ -2888,11 +2888,16 @@ def get_tenant_me():
     """Return the caller's tenant row with private credentials stripped.
     Available to any authenticated user in the tenant. Includes a 1-hour
     presigned `logoUrl` so the frontend can render the logo without the
-    S3 bucket being public."""
+    S3 bucket being public. solaXKey is **never** returned; instead we
+    emit `solaXKeyLast4` so the Settings UI can show a "•••• 7894" hint
+    confirming a key is on file without ever exposing the full secret."""
     tenant_id = _require_tenant()
     tenant = _load_tenant(tenant_id) or {}
     out = {k: v for k, v in tenant.items() if k in _TENANT_PUBLIC_FIELDS}
     out['logoUrl'] = _presigned_logo_url(tenant.get('logoS3Key'))
+    raw_key = (tenant.get('solaXKey') or '').strip()
+    out['solaXKeyLast4'] = raw_key[-4:] if len(raw_key) >= 4 else ''
+    out['solaXKeyConfigured'] = bool(raw_key)
     return respond(200, out)
 
 
@@ -2932,12 +2937,26 @@ def get_logo_upload_url(body):
 def update_tenant_me(body):
     """Admin-only: update the caller's tenant row. Only fields in
     _TENANT_ADMIN_EDITABLE are accepted; everything else is silently
-    dropped so a tampered request can't promote itself or rewrite the
-    Sola xKey."""
+    dropped so a tampered request can't promote itself or rewrite a
+    field that's supposed to be platform-owned."""
     if not _is_admin():
         return _forbid()
     tenant_id = _require_tenant()
     updates = {k: v for k, v in (body or {}).items() if k in _TENANT_ADMIN_EDITABLE}
+    # Belt-and-braces for gateway credentials: an empty/whitespace value
+    # from the frontend must NOT clear a working key. Saving the Branding
+    # tab without re-typing the keys is the common case, so the inputs
+    # would naturally submit blank. Drop blanks here so the existing keys
+    # are preserved; only an explicit "__CLEAR__" sentinel actually unsets.
+    for secret in ('solaXKey', 'solaIFieldsKey'):
+        if secret in updates:
+            v = (str(updates[secret]) or '').strip()
+            if not v:
+                updates.pop(secret, None)
+            elif v == '__CLEAR__':
+                updates[secret] = ''
+            else:
+                updates[secret] = v
     if not updates:
         return respond(400, {'error': 'No editable fields in request'})
     expr_parts, expr_names, expr_values = [], {}, {}
