@@ -1633,6 +1633,11 @@ def run_monthly_membership_billing():
                 'sub': 'system-cron',
             }
             try:
+                # Self-heal: migrate any legacy plaintext xKey to SSM on
+                # every cron tick. Cheap (cache hit after first migration)
+                # and protects against future onboarding bugs that leave
+                # a key on the row.
+                _get_tenant_sola_xkey(tid)
                 all_summaries[tid] = _run_monthly_membership_billing_for_current_tenant()
             except Exception as e:
                 print(f'[cron] tenant {tid} failed: {e}')
