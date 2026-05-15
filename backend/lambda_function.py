@@ -2700,7 +2700,20 @@ def get_public_branding(event):
         except Exception as e:
             print(f'[public-branding] GSI query failed: {e}')
     if not match:
-        match = _load_tenant('stcd') or {}
+        # No tenant for this hostname — return the generic platform brand
+        # so the Login page renders as "Shul Portal" instead of leaking
+        # whatever tenant happens to be the platform default. The frontend
+        # uses its bundled platform logo when logoUrl is empty.
+        return respond(200, {
+            'tenantId': '',
+            'displayName': 'Shul Portal',
+            'legalName': '',
+            'primaryColor': '#1a365d',
+            'secondaryColor': '#2a4a7f',
+            'accentColor': '#c6973f',
+            'logoS3Key': '',
+            'logoUrl': '',
+        })
     safe = {
         'tenantId': match.get('tenantId', ''),
         'displayName': match.get('displayName', 'Member Portal'),
@@ -2709,9 +2722,6 @@ def get_public_branding(event):
         'secondaryColor': match.get('secondaryColor', '#2a4a7f'),
         'accentColor': match.get('accentColor', '#c6973f'),
         'logoS3Key': match.get('logoS3Key', ''),
-        # Presigned GET so the Login page can render the per-tenant logo
-        # before any JWT exists. URL has the credentials embedded; the
-        # bucket can stay private.
         'logoUrl': _presigned_logo_url(match.get('logoS3Key')),
     }
     return respond(200, safe)

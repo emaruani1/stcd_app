@@ -266,16 +266,33 @@ export default function Login({ onLogin }) {
       <div className="login-bg-pattern"></div>
       <div className="login-card">
         <div className="login-header">
-          <img
-            src={branding.logoUrl || '/stcd_logo.png'}
-            alt={`${branding.displayName} Logo`}
-            className={`login-logo ${branding.logoUrl ? 'login-logo-uploaded' : 'login-logo-default'}`}
-          />
-          <h1>{branding.legalName || branding.displayName}</h1>
-          {branding.legalName && branding.legalName !== branding.displayName && (
-            <p className="login-subtitle">{branding.displayName}</p>
-          )}
-          <p className="login-desc">Member Portal</p>
+          {(() => {
+            // Three branding states the Login page renders for:
+            //  1. Hostname matched a tenant → show that tenant's logo + name.
+            //  2. No tenant match (the bare Amplify URL or any un-mapped
+            //     domain) → platform brand: Torah scroll + "Shul Portal".
+            //  3. Mid-fetch fallback → platform brand again (cheap default,
+            //     never an STCD-specific render leaking through).
+            const isTenant = !!branding.tenantId
+            const logoSrc = branding.logoUrl || (isTenant ? '/stcd_logo.png' : '/shul_portal_logo.png')
+            const logoClass = isTenant && !branding.logoUrl
+              ? 'login-logo login-logo-default'
+              : 'login-logo login-logo-uploaded'
+            const heading = isTenant
+              ? (branding.legalName || branding.displayName)
+              : 'Welcome to Shul Portal'
+            const subtitle = isTenant && branding.legalName && branding.legalName !== branding.displayName
+              ? branding.displayName
+              : ''
+            return (
+              <>
+                <img src={logoSrc} alt={`${branding.displayName} Logo`} className={logoClass} />
+                <h1>{heading}</h1>
+                {subtitle && <p className="login-subtitle">{subtitle}</p>}
+                <p className="login-desc">Member Portal</p>
+              </>
+            )
+          })()}
         </div>
 
         {error && <div style={{ color: 'var(--danger)', background: 'var(--danger-bg, #fee)', padding: '10px 14px', borderRadius: 'var(--radius-sm)', marginBottom: '12px', fontSize: '0.85rem' }}>{error}</div>}
