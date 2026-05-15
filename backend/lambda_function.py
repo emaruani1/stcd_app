@@ -27,21 +27,8 @@ TENANT_ASSETS_BUCKET = os.environ.get('TENANT_ASSETS_BUCKET', 'stcd-saas-tenant-
 # stay stable across sessions (no hourly presigned-URL churn).
 TENANT_ASSETS_CDN = os.environ.get('TENANT_ASSETS_CDN', 'https://d3fg8gqx8vufpg.cloudfront.net')
 SSM_TENANT_PREFIX = '/stcd/tenants'
-members_table = dynamodb.Table(os.environ.get('MEMBERS_TABLE', 'stcd_members'))
-transactions_table = dynamodb.Table(os.environ.get('TRANSACTIONS_TABLE', 'stcd_transactions'))
-pledges_table = dynamodb.Table(os.environ.get('PLEDGES_TABLE', 'stcd_pledges'))
-sponsorships_table = dynamodb.Table(os.environ.get('SPONSORSHIPS_TABLE', 'stcd_sponsorships'))
-emails_table = dynamodb.Table(os.environ.get('EMAILS_TABLE', 'stcd_emails'))
-settings_table = dynamodb.Table(os.environ.get('SETTINGS_TABLE', 'stcd_settings'))
-payment_methods_table = dynamodb.Table(os.environ.get('PAYMENT_METHODS_TABLE', 'stcd_payment_methods'))
 tenants_table = dynamodb.Table(os.environ.get('TENANTS_TABLE', 'stcd_tenants'))
 
-# Phase 1 migration shim — each table can run in one of four modes:
-#   legacy                  — old single-tenant table only (default)
-#   dual_write_read_legacy  — writes hit both old + v2, reads still old
-#   dual_write_read_v2      — writes hit both, reads come from v2 (cutover)
-#   v2_only                 — reads + writes go to v2 only (post-confidence)
-# Per-table env var so we can roll each table independently.
 settings_table_v2        = dynamodb.Table(os.environ.get('SETTINGS_TABLE_V2',        'stcd_settings_v2'))
 emails_table_v2          = dynamodb.Table(os.environ.get('EMAILS_TABLE_V2',          'stcd_emails_v2'))
 sponsorships_table_v2    = dynamodb.Table(os.environ.get('SPONSORSHIPS_TABLE_V2',    'stcd_sponsorships_v2'))
@@ -327,34 +314,6 @@ def _bust_tenant_cache(tenant_id=None):
         _tenant_cache.clear()
 
 
-# ===== Phase 1 migration-mode helpers =====
-# Each migrating table reads its own env var (SETTINGS_TABLE_MODE, etc.) to
-# decide where to read from and where to write. Returns the mode string;
-# defaults to 'legacy' so existing deploys without the env set behave
-# identically to pre-Phase-1.
-_VALID_MODES = {'legacy', 'dual_write_read_legacy', 'dual_write_read_v2', 'v2_only'}
-
-
-def _migration_mode(table_key):
-    """table_key is the short name ('SETTINGS', 'EMAILS', etc.). Returns the
-    mode string, clamped to one of the valid values; bad values fall back
-    to 'legacy' so a typo in console doesn't break production."""
-    raw = (os.environ.get(f'{table_key}_TABLE_MODE', '') or '').strip().lower()
-    return raw if raw in _VALID_MODES else 'legacy'
-
-
-def _should_write_legacy(table_key):
-    return _migration_mode(table_key) in ('legacy', 'dual_write_read_legacy', 'dual_write_read_v2')
-
-
-def _should_write_v2(table_key):
-    return _migration_mode(table_key) in ('dual_write_read_legacy', 'dual_write_read_v2', 'v2_only')
-
-
-def _should_read_v2(table_key):
-    return _migration_mode(table_key) in ('dual_write_read_v2', 'v2_only')
-
-
 def _actor_stamp_create():
     """Returns audit fields for newly created records."""
     a = _get_actor()
@@ -435,8 +394,7 @@ def _idempotent_txn_id(key, suffix=''):
 def _try_atomic_put_txn(item):
     """
     Try to write `item` only if its transactionId doesn't already exist.
-    Returns (won, existing_item). Goes through the migration shim so the
-    dual-write branch sees the same conditional semantics.
+    Returns (won, existing_item).
     """
     won = _txn_put_conditional(item, condition_expression='attribute_not_exists(transactionId)')
     if won:
@@ -529,8 +487,7 @@ def extract_path_id(path, prefix):
 
 
 def _all_member_transactions(member_id):
-    """Fetch every transaction row for a member. Delegates to the migration
-    helper so this respects TRANSACTIONS_TABLE_MODE."""
+    """Fetch every transaction row for a member."""
     return _txn_query_by_member(str(member_id))
 
 
@@ -858,14 +815,10 @@ def lambda_handler(event, context):
 
 
 # ===================== MEMBERS =====================
-# Phase 1 migration shim — MEMBERS_TABLE_MODE env var routes reads/writes.
 
 def _members_get(member_id):
     tenant_id = _require_tenant()
-    if _should_read_v2('MEMBERS'):
-        res = members_table_v2.get_item(Key={'tenantId': tenant_id, 'memberId': str(member_id)})
-    else:
-        res = members_table.get_item(Key={'memberId': member_id})
+    res = members_table_v2.get_item(Key={'tenantId': tenant_id, 'memberId': str(member_id)})
     return res.get('Item')
 
 
@@ -877,11 +830,8 @@ def _members_list_all_for_tenant():
         kw = {}
         if last_key:
             kw['ExclusiveStartKey'] = last_key
-        if _should_read_v2('MEMBERS'):
-            kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
-            res = members_table_v2.query(**kw)
-        else:
-            res = members_table.scan(**kw)
+        kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
+        res = members_table_v2.query(**kw)
         items.extend(res.get('Items', []))
         last_key = res.get('LastEvaluatedKey')
         if not last_key:
@@ -893,28 +843,19 @@ def _members_put(item):
     """Write a full member record. Stamps tenantId on the v2 write so the
     composite PK is well-formed; memberId is coerced to string."""
     tenant_id = _require_tenant()
-    if _should_write_legacy('MEMBERS'):
-        members_table.put_item(Item=item)
-    if _should_write_v2('MEMBERS'):
-        v2_item = {**item, 'tenantId': tenant_id, 'memberId': str(item.get('memberId', ''))}
-        members_table_v2.put_item(Item=v2_item)
+    v2_item = {**item, 'tenantId': tenant_id, 'memberId': str(item.get('memberId', ''))}
+    members_table_v2.put_item(Item=v2_item)
 
 
 def _members_update(member_id, **kwargs):
     """Wrap update_item — accepts UpdateExpression, ExpressionAttribute*."""
     tenant_id = _require_tenant()
-    if _should_write_legacy('MEMBERS'):
-        members_table.update_item(Key={'memberId': member_id}, **kwargs)
-    if _should_write_v2('MEMBERS'):
-        members_table_v2.update_item(Key={'tenantId': tenant_id, 'memberId': str(member_id)}, **kwargs)
+    members_table_v2.update_item(Key={'tenantId': tenant_id, 'memberId': str(member_id)}, **kwargs)
 
 
 def _members_delete(member_id):
     tenant_id = _require_tenant()
-    if _should_write_legacy('MEMBERS'):
-        members_table.delete_item(Key={'memberId': member_id})
-    if _should_write_v2('MEMBERS'):
-        members_table_v2.delete_item(Key={'tenantId': tenant_id, 'memberId': str(member_id)})
+    members_table_v2.delete_item(Key={'tenantId': tenant_id, 'memberId': str(member_id)})
 
 
 def get_members(event):
@@ -1076,7 +1017,6 @@ def merge_members(body):
 
 
 # ===================== TRANSACTIONS =====================
-# Phase 1 migration shim — TRANSACTIONS_TABLE_MODE env var routes reads/writes.
 # v2 schema: PK tenantId + SK transactionId. Two GSIs:
 #   - member-index   on (tenantIdMemberId, txnDate)
 #   - date-index     on (tenantIdYearMonth, txnDate)
@@ -1097,40 +1037,28 @@ def _txn_v2_extra_attrs(item):
 
 
 def _txn_get(member_id, transaction_id):
-    """Read a single transaction. member_id required for the legacy key
-    (in v2 it's not part of the key, but we accept it for source-compat)."""
+    """Read a single transaction. member_id accepted for source-compat
+    (not part of the v2 key)."""
     tenant_id = _require_tenant()
-    if _should_read_v2('TRANSACTIONS'):
-        res = transactions_table_v2.get_item(Key={'tenantId': tenant_id, 'transactionId': transaction_id})
-    else:
-        res = transactions_table.get_item(Key={'memberId': str(member_id), 'transactionId': transaction_id})
+    res = transactions_table_v2.get_item(Key={'tenantId': tenant_id, 'transactionId': transaction_id})
     return res.get('Item')
 
 
 def _txn_query_by_member(member_id):
     tenant_id = _require_tenant()
-    if _should_read_v2('TRANSACTIONS'):
-        res = transactions_table_v2.query(
-            IndexName='member-index',
-            KeyConditionExpression=Key('tenantIdMemberId').eq(f"{tenant_id}#{member_id}"),
-        )
-    else:
-        res = transactions_table.query(KeyConditionExpression=Key('memberId').eq(str(member_id)))
+    res = transactions_table_v2.query(
+        IndexName='member-index',
+        KeyConditionExpression=Key('tenantIdMemberId').eq(f"{tenant_id}#{member_id}"),
+    )
     return res.get('Items', [])
 
 
 def _txn_query_by_yearmonth(year_month):
     tenant_id = _require_tenant()
-    if _should_read_v2('TRANSACTIONS'):
-        res = transactions_table_v2.query(
-            IndexName='date-index',
-            KeyConditionExpression=Key('tenantIdYearMonth').eq(f"{tenant_id}#{year_month}"),
-        )
-    else:
-        res = transactions_table.query(
-            IndexName='date-index',
-            KeyConditionExpression=Key('yearMonth').eq(year_month),
-        )
+    res = transactions_table_v2.query(
+        IndexName='date-index',
+        KeyConditionExpression=Key('tenantIdYearMonth').eq(f"{tenant_id}#{year_month}"),
+    )
     return res.get('Items', [])
 
 
@@ -1142,11 +1070,8 @@ def _txn_scan_all_for_tenant():
         kw = {}
         if last_key:
             kw['ExclusiveStartKey'] = last_key
-        if _should_read_v2('TRANSACTIONS'):
-            kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
-            res = transactions_table_v2.query(**kw)
-        else:
-            res = transactions_table.scan(**kw)
+        kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
+        res = transactions_table_v2.query(**kw)
         items.extend(res.get('Items', []))
         last_key = res.get('LastEvaluatedKey')
         if not last_key:
@@ -1155,65 +1080,39 @@ def _txn_scan_all_for_tenant():
 
 
 def _txn_put(item):
-    if _should_write_legacy('TRANSACTIONS'):
-        transactions_table.put_item(Item=item)
-    if _should_write_v2('TRANSACTIONS'):
-        transactions_table_v2.put_item(Item={**item, **_txn_v2_extra_attrs(item)})
+    transactions_table_v2.put_item(Item={**item, **_txn_v2_extra_attrs(item)})
 
 
 def _txn_put_conditional(item, condition_expression=None):
-    """Used by the idempotency claim — supports ConditionExpression. Mirrors
-    the legacy semantics: returns True if the put succeeded, False if the
-    condition failed (duplicate). Only the legacy table's response governs
-    the return value to keep semantics identical; v2 gets a best-effort
-    write since the same idempotency key on v2 would similarly fail.
+    """Used by the idempotency claim — supports ConditionExpression.
+    Returns True if the put succeeded, False if the condition failed
+    (duplicate). Non-condition errors propagate so the caller can
+    surface them rather than silently treating an idempotent claim as
+    successful when a real write error happened.
     """
-    legacy_ok = True
-    if _should_write_legacy('TRANSACTIONS'):
-        try:
-            kw = {'Item': item}
-            if condition_expression:
-                kw['ConditionExpression'] = condition_expression
-            transactions_table.put_item(**kw)
-        except ClientError as e:
-            if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
-                legacy_ok = False
-            else:
-                raise
-    if _should_write_v2('TRANSACTIONS'):
-        try:
-            kw = {'Item': {**item, **_txn_v2_extra_attrs(item)}}
-            if condition_expression:
-                kw['ConditionExpression'] = condition_expression
-            transactions_table_v2.put_item(**kw)
-        except ClientError as e:
-            # Ignore failed condition on v2 if legacy succeeded — dual-write
-            # consistency over strict-condition behaviour.
-            if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
-                print(f"[txn] v2 put_conditional non-condition error: {e}")
-    return legacy_ok
+    try:
+        kw = {'Item': {**item, **_txn_v2_extra_attrs(item)}}
+        if condition_expression:
+            kw['ConditionExpression'] = condition_expression
+        transactions_table_v2.put_item(**kw)
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return False
+        raise
 
 
 def _txn_update(member_id, transaction_id, **kwargs):
     tenant_id = _require_tenant()
-    if _should_write_legacy('TRANSACTIONS'):
-        transactions_table.update_item(
-            Key={'memberId': str(member_id), 'transactionId': transaction_id},
-            **kwargs,
-        )
-    if _should_write_v2('TRANSACTIONS'):
-        transactions_table_v2.update_item(
-            Key={'tenantId': tenant_id, 'transactionId': transaction_id},
-            **kwargs,
-        )
+    transactions_table_v2.update_item(
+        Key={'tenantId': tenant_id, 'transactionId': transaction_id},
+        **kwargs,
+    )
 
 
 def _txn_delete(member_id, transaction_id):
     tenant_id = _require_tenant()
-    if _should_write_legacy('TRANSACTIONS'):
-        transactions_table.delete_item(Key={'memberId': str(member_id), 'transactionId': transaction_id})
-    if _should_write_v2('TRANSACTIONS'):
-        transactions_table_v2.delete_item(Key={'tenantId': tenant_id, 'transactionId': transaction_id})
+    transactions_table_v2.delete_item(Key={'tenantId': tenant_id, 'transactionId': transaction_id})
 
 
 def get_transactions(event):
@@ -1895,7 +1794,6 @@ def cancel_transaction(body):
 
 
 # ===================== PLEDGES =====================
-# Phase 1 migration shim — PLEDGES_TABLE_MODE env var routes reads/writes.
 # v2 schema: PK tenantId + SK pledgeId. New GSI member-index on
 # (tenantIdMemberId, date) so per-member queries still work.
 
@@ -1911,10 +1809,7 @@ def _pledges_v2_extra_attrs(item):
 
 def _pledge_get(member_id, pledge_id):
     tenant_id = _require_tenant()
-    if _should_read_v2('PLEDGES'):
-        res = pledges_table_v2.get_item(Key={'tenantId': tenant_id, 'pledgeId': pledge_id})
-    else:
-        res = pledges_table.get_item(Key={'memberId': member_id, 'pledgeId': pledge_id})
+    res = pledges_table_v2.get_item(Key={'tenantId': tenant_id, 'pledgeId': pledge_id})
     return res.get('Item')
 
 
@@ -1926,11 +1821,8 @@ def _pledges_list_all_for_tenant():
         kw = {}
         if last_key:
             kw['ExclusiveStartKey'] = last_key
-        if _should_read_v2('PLEDGES'):
-            kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
-            res = pledges_table_v2.query(**kw)
-        else:
-            res = pledges_table.scan(**kw)
+        kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
+        res = pledges_table_v2.query(**kw)
         items.extend(res.get('Items', []))
         last_key = res.get('LastEvaluatedKey')
         if not last_key:
@@ -1940,37 +1832,25 @@ def _pledges_list_all_for_tenant():
 
 def _pledges_list_for_member(member_id):
     tenant_id = _require_tenant()
-    if _should_read_v2('PLEDGES'):
-        res = pledges_table_v2.query(
-            IndexName='member-index',
-            KeyConditionExpression=Key('tenantIdMemberId').eq(f"{tenant_id}#{member_id}"),
-        )
-    else:
-        res = pledges_table.query(KeyConditionExpression=Key('memberId').eq(member_id))
+    res = pledges_table_v2.query(
+        IndexName='member-index',
+        KeyConditionExpression=Key('tenantIdMemberId').eq(f"{tenant_id}#{member_id}"),
+    )
     return res.get('Items', [])
 
 
 def _pledge_put(item):
-    if _should_write_legacy('PLEDGES'):
-        pledges_table.put_item(Item=item)
-    if _should_write_v2('PLEDGES'):
-        pledges_table_v2.put_item(Item={**item, **_pledges_v2_extra_attrs(item)})
+    pledges_table_v2.put_item(Item={**item, **_pledges_v2_extra_attrs(item)})
 
 
 def _pledge_update(member_id, pledge_id, **kwargs):
     tenant_id = _require_tenant()
-    if _should_write_legacy('PLEDGES'):
-        pledges_table.update_item(Key={'memberId': member_id, 'pledgeId': pledge_id}, **kwargs)
-    if _should_write_v2('PLEDGES'):
-        pledges_table_v2.update_item(Key={'tenantId': tenant_id, 'pledgeId': pledge_id}, **kwargs)
+    pledges_table_v2.update_item(Key={'tenantId': tenant_id, 'pledgeId': pledge_id}, **kwargs)
 
 
 def _pledge_delete(member_id, pledge_id):
     tenant_id = _require_tenant()
-    if _should_write_legacy('PLEDGES'):
-        pledges_table.delete_item(Key={'memberId': member_id, 'pledgeId': pledge_id})
-    if _should_write_v2('PLEDGES'):
-        pledges_table_v2.delete_item(Key={'tenantId': tenant_id, 'pledgeId': pledge_id})
+    pledges_table_v2.delete_item(Key={'tenantId': tenant_id, 'pledgeId': pledge_id})
 
 
 def get_pledges(event):
@@ -2272,9 +2152,7 @@ def _apply_pledge_payment(member_id, pledge_id, amount, method):
 
 # ===================== SETTINGS =====================
 #
-# Settings are tenant-scoped via the Phase 1 migration shim. While in
-# `legacy` mode all reads/writes hit the original single-tenant table.
-# Once flipped to dual-write, the v2 table receives every write keyed
+# Settings are tenant-scoped. The v2 table receives every write keyed
 # by (tenantId, settingKey) so each synagogue has its own pledge types,
 # payment methods, products, kiddush prices, membership plans, and
 # email templates. The transition rule in _get_actor() guarantees a
@@ -2283,12 +2161,9 @@ def _apply_pledge_payment(member_id, pledge_id, amount, method):
 
 def _settings_get(key):
     """Return the raw item dict for (current tenant, settingKey), or None
-    if not found. Reads from v2 or legacy depending on migration mode."""
+    if not found."""
     tenant_id = _require_tenant()
-    if _should_read_v2('SETTINGS'):
-        res = settings_table_v2.get_item(Key={'tenantId': tenant_id, 'settingKey': key})
-    else:
-        res = settings_table.get_item(Key={'settingKey': key})
+    res = settings_table_v2.get_item(Key={'tenantId': tenant_id, 'settingKey': key})
     return res.get('Item')
 
 
@@ -2299,38 +2174,24 @@ def _settings_read(key):
 
 
 def _settings_read_all_for_tenant():
-    """Return a dict {settingKey: items} for the current tenant. Reads from
-    v2 (query) or legacy (scan) depending on mode."""
+    """Return a dict {settingKey: items} for the current tenant."""
     tenant_id = _require_tenant()
     out = {}
-    if _should_read_v2('SETTINGS'):
-        res = settings_table_v2.query(KeyConditionExpression=Key('tenantId').eq(tenant_id))
-        for item in res.get('Items', []):
-            out[item['settingKey']] = item.get('items', [])
-    else:
-        res = settings_table.scan()
-        for item in res.get('Items', []):
-            out[item['settingKey']] = item.get('items', [])
+    res = settings_table_v2.query(KeyConditionExpression=Key('tenantId').eq(tenant_id))
+    for item in res.get('Items', []):
+        out[item['settingKey']] = item.get('items', [])
     return out
 
 
 def _settings_write(key, items, stamp):
-    """Write one settingKey for the current tenant. Hits whichever target(s)
-    the migration mode says — legacy, v2, or both."""
+    """Write one settingKey for the current tenant."""
     tenant_id = _require_tenant()
-    if _should_write_legacy('SETTINGS'):
-        settings_table.put_item(Item={
-            'settingKey': key,
-            'items': items,
-            **stamp,
-        })
-    if _should_write_v2('SETTINGS'):
-        settings_table_v2.put_item(Item={
-            'tenantId': tenant_id,
-            'settingKey': key,
-            'items': items,
-            **stamp,
-        })
+    settings_table_v2.put_item(Item={
+        'tenantId': tenant_id,
+        'settingKey': key,
+        'items': items,
+        **stamp,
+    })
 
 
 def get_all_settings():
@@ -2353,14 +2214,10 @@ def update_setting(key, body):
 
 
 # ===================== SPONSORSHIPS =====================
-# Phase 1 migration shim — SPONSORSHIPS_TABLE_MODE env var routes reads/writes.
 
 def _sponsorships_get(date_key):
     tenant_id = _require_tenant()
-    if _should_read_v2('SPONSORSHIPS'):
-        res = sponsorships_table_v2.get_item(Key={'tenantId': tenant_id, 'dateKey': date_key})
-    else:
-        res = sponsorships_table.get_item(Key={'dateKey': date_key})
+    res = sponsorships_table_v2.get_item(Key={'tenantId': tenant_id, 'dateKey': date_key})
     return res.get('Item')
 
 
@@ -2372,11 +2229,8 @@ def _sponsorships_list_all_for_tenant():
         kw = {}
         if last_key:
             kw['ExclusiveStartKey'] = last_key
-        if _should_read_v2('SPONSORSHIPS'):
-            kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
-            res = sponsorships_table_v2.query(**kw)
-        else:
-            res = sponsorships_table.scan(**kw)
+        kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
+        res = sponsorships_table_v2.query(**kw)
         items.extend(res.get('Items', []))
         last_key = res.get('LastEvaluatedKey')
         if not last_key:
@@ -2386,18 +2240,12 @@ def _sponsorships_list_all_for_tenant():
 
 def _sponsorships_put(item):
     tenant_id = _require_tenant()
-    if _should_write_legacy('SPONSORSHIPS'):
-        sponsorships_table.put_item(Item=item)
-    if _should_write_v2('SPONSORSHIPS'):
-        sponsorships_table_v2.put_item(Item={**item, 'tenantId': tenant_id})
+    sponsorships_table_v2.put_item(Item={**item, 'tenantId': tenant_id})
 
 
 def _sponsorships_delete(date_key):
     tenant_id = _require_tenant()
-    if _should_write_legacy('SPONSORSHIPS'):
-        sponsorships_table.delete_item(Key={'dateKey': date_key})
-    if _should_write_v2('SPONSORSHIPS'):
-        sponsorships_table_v2.delete_item(Key={'tenantId': tenant_id, 'dateKey': date_key})
+    sponsorships_table_v2.delete_item(Key={'tenantId': tenant_id, 'dateKey': date_key})
 
 
 def _sponsorships_remove_field(date_key, field):
@@ -2406,16 +2254,10 @@ def _sponsorships_remove_field(date_key, field):
         'UpdateExpression': f'REMOVE #{field}',
         'ExpressionAttributeNames': {f'#{field}': field},
     }
-    if _should_write_legacy('SPONSORSHIPS'):
-        try:
-            sponsorships_table.update_item(Key={'dateKey': date_key}, **kwargs)
-        except Exception:
-            pass
-    if _should_write_v2('SPONSORSHIPS'):
-        try:
-            sponsorships_table_v2.update_item(Key={'tenantId': tenant_id, 'dateKey': date_key}, **kwargs)
-        except Exception:
-            pass
+    try:
+        sponsorships_table_v2.update_item(Key={'tenantId': tenant_id, 'dateKey': date_key}, **kwargs)
+    except Exception:
+        pass
 
 
 def get_sponsorships():
@@ -2523,7 +2365,6 @@ def delete_sponsorship(date_key, body):
 
 
 # ===================== EMAILS =====================
-# Phase 1 migration shim — EMAILS_TABLE_MODE env var routes reads/writes.
 
 def _emails_list_all_for_tenant():
     tenant_id = _require_tenant()
@@ -2533,11 +2374,8 @@ def _emails_list_all_for_tenant():
         kw = {}
         if last_key:
             kw['ExclusiveStartKey'] = last_key
-        if _should_read_v2('EMAILS'):
-            kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
-            res = emails_table_v2.query(**kw)
-        else:
-            res = emails_table.scan(**kw)
+        kw['KeyConditionExpression'] = Key('tenantId').eq(tenant_id)
+        res = emails_table_v2.query(**kw)
         items.extend(res.get('Items', []))
         last_key = res.get('LastEvaluatedKey')
         if not last_key:
@@ -2547,10 +2385,7 @@ def _emails_list_all_for_tenant():
 
 def _emails_put(item):
     tenant_id = _require_tenant()
-    if _should_write_legacy('EMAILS'):
-        emails_table.put_item(Item=item)
-    if _should_write_v2('EMAILS'):
-        emails_table_v2.put_item(Item={**item, 'tenantId': tenant_id})
+    emails_table_v2.put_item(Item={**item, 'tenantId': tenant_id})
 
 
 def get_emails():
@@ -3200,17 +3035,10 @@ def _sola_post(payload):
     return ok, resp
 
 
-# ===== Payment methods migration shim =====
-# Phase 1 migration shim — PAYMENT_METHODS_TABLE_MODE env var routes reads/writes.
+# ===== Payment methods helpers =====
 # v2 schema fixes the long-standing Number-vs-String memberId mismatch by
 # using a synthesised composite `memberIdPaymentMethodId` range key (always
-# String). Legacy key shape is preserved for the legacy branch.
-
-
-def _pm_legacy_key_value(member_id):
-    """Legacy `memberId` PK is Number when the id is numeric, String otherwise.
-    Kept identical to the pre-migration code for safe dual-write."""
-    return int(member_id) if str(member_id).isdigit() else member_id
+# String).
 
 
 def _pm_v2_range_key(member_id, payment_method_id):
@@ -3219,74 +3047,47 @@ def _pm_v2_range_key(member_id, payment_method_id):
 
 def _pm_get(member_id, payment_method_id):
     tenant_id = _require_tenant()
-    if _should_read_v2('PAYMENT_METHODS'):
-        res = payment_methods_table_v2.get_item(Key={
-            'tenantId': tenant_id,
-            'memberIdPaymentMethodId': _pm_v2_range_key(member_id, payment_method_id),
-        })
-    else:
-        res = payment_methods_table.get_item(Key={
-            'memberId': _pm_legacy_key_value(member_id),
-            'paymentMethodId': payment_method_id,
-        })
+    res = payment_methods_table_v2.get_item(Key={
+        'tenantId': tenant_id,
+        'memberIdPaymentMethodId': _pm_v2_range_key(member_id, payment_method_id),
+    })
     return res.get('Item')
 
 
 def _pm_list_for_member(member_id):
     tenant_id = _require_tenant()
-    if _should_read_v2('PAYMENT_METHODS'):
-        res = payment_methods_table_v2.query(
-            KeyConditionExpression=Key('tenantId').eq(tenant_id) & Key('memberIdPaymentMethodId').begins_with(f"{member_id}#"),
-        )
-    else:
-        res = payment_methods_table.query(
-            KeyConditionExpression=Key('memberId').eq(_pm_legacy_key_value(member_id))
-        )
+    res = payment_methods_table_v2.query(
+        KeyConditionExpression=Key('tenantId').eq(tenant_id) & Key('memberIdPaymentMethodId').begins_with(f"{member_id}#"),
+    )
     return res.get('Items', [])
 
 
 def _pm_put(item):
-    """item carries memberId + paymentMethodId. We write a legacy-shaped row
-    and a v2-shaped row in parallel."""
+    """item carries memberId + paymentMethodId."""
     tenant_id = _require_tenant()
     member_id = str(item.get('memberId', ''))
     payment_method_id = item.get('paymentMethodId', '')
-    if _should_write_legacy('PAYMENT_METHODS'):
-        payment_methods_table.put_item(Item=item)
-    if _should_write_v2('PAYMENT_METHODS'):
-        v2_item = {**item,
-                   'memberId': member_id,                       # always String in v2
-                   'tenantId': tenant_id,
-                   'memberIdPaymentMethodId': _pm_v2_range_key(member_id, payment_method_id)}
-        payment_methods_table_v2.put_item(Item=v2_item)
+    v2_item = {**item,
+               'memberId': member_id,                       # always String in v2
+               'tenantId': tenant_id,
+               'memberIdPaymentMethodId': _pm_v2_range_key(member_id, payment_method_id)}
+    payment_methods_table_v2.put_item(Item=v2_item)
 
 
 def _pm_update(member_id, payment_method_id, **kwargs):
     tenant_id = _require_tenant()
-    if _should_write_legacy('PAYMENT_METHODS'):
-        payment_methods_table.update_item(
-            Key={'memberId': _pm_legacy_key_value(member_id), 'paymentMethodId': payment_method_id},
-            **kwargs,
-        )
-    if _should_write_v2('PAYMENT_METHODS'):
-        payment_methods_table_v2.update_item(
-            Key={'tenantId': tenant_id, 'memberIdPaymentMethodId': _pm_v2_range_key(member_id, payment_method_id)},
-            **kwargs,
-        )
+    payment_methods_table_v2.update_item(
+        Key={'tenantId': tenant_id, 'memberIdPaymentMethodId': _pm_v2_range_key(member_id, payment_method_id)},
+        **kwargs,
+    )
 
 
 def _pm_delete(member_id, payment_method_id):
     tenant_id = _require_tenant()
-    if _should_write_legacy('PAYMENT_METHODS'):
-        payment_methods_table.delete_item(Key={
-            'memberId': _pm_legacy_key_value(member_id),
-            'paymentMethodId': payment_method_id,
-        })
-    if _should_write_v2('PAYMENT_METHODS'):
-        payment_methods_table_v2.delete_item(Key={
-            'tenantId': tenant_id,
-            'memberIdPaymentMethodId': _pm_v2_range_key(member_id, payment_method_id),
-        })
+    payment_methods_table_v2.delete_item(Key={
+        'tenantId': tenant_id,
+        'memberIdPaymentMethodId': _pm_v2_range_key(member_id, payment_method_id),
+    })
 
 
 def _detect_brand(masked):
@@ -3368,7 +3169,7 @@ def create_payment_method(body):
 
     actor = _actor_stamp_create()
     item = {
-        'memberId': _pm_legacy_key_value(member_id),
+        'memberId': str(member_id),
         'paymentMethodId': payment_method_id,
         'xToken': x_token,
         'maskedCardNumber': masked,
@@ -3593,7 +3394,7 @@ def charge_saved_card(body):
         if x_token:
             saved_payment_method_id = f"pm_{uuid.uuid4().hex[:12]}"
             item = {
-                'memberId': _pm_legacy_key_value(member_id),
+                'memberId': str(member_id),
                 'paymentMethodId': saved_payment_method_id,
                 'xToken': x_token,
                 'maskedCardNumber': masked,
