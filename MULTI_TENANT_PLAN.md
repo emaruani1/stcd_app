@@ -186,7 +186,67 @@ Strategy: introduce composite tenant-prefixed PKs. New table per old table with 
 |---|---|---|---|
 | 6.1 | Amplify | Single deployment, multiple custom domains (`tcs.stcd.app`, `kkjmiami.stcd.app`, etc.) — preferred. OR single domain + tenant-from-hostname lookup | Same artifact serves all tenants — that's what makes it a SaaS |
 | 6.2 | DNS | One ACM cert with SANs (or one cert per tenant subdomain), CNAMEs to Amplify | Standard custom-domain wiring |
-| 6.3 | Tenant onboarding script | One-shot script: create tenant row → invite first admin user (Cognito with `custom:tenantId` set) → optionally provision custom domain | Repeatable onboarding |
+| 6.3 | Tenant onboarding script (`backend/onboard_tenant.py`) | One-shot script: create tenant row → invite first admin user (Cognito with `custom:tenantId` set) → optionally provision custom domain. ✅ Built. | Repeatable onboarding |
+
+#### 6.1 / 6.2 — Custom-domain wiring playbook
+
+Per-tenant subdomains are wired via Amplify's "Manage custom domains" panel.
+Single deployment, N domains. Steps when onboarding tenant #N:
+
+1. **DNS prerequisite.** Tenant either uses a vanity subdomain you own
+   (`<tenant>.stcd.app`) or provides their own domain
+   (`portal.<tenant>.org`). For their own domain, they must give you NS or
+   CNAME control.
+2. **Amplify Console → App → Domain management → Add domain.**
+   - Enter the apex or subdomain. Amplify provisions an ACM cert
+     automatically (DNS validation — you'll be given a CNAME pair to add).
+   - For per-tenant SUBdomains of a single apex you own, an ACM cert with
+     SANs covers them; Amplify still walks the same flow per subdomain.
+3. **Add the new origin to `ALLOWED_ORIGINS`** in `backend/lambda_function.py:42`,
+   or switch to the regex form already sketched in Phase 2.9. Without
+   this CORS will block API calls from the new domain.
+4. **Set the `domain` field on the new tenant's `stcd_tenants` row** to
+   the hostname (lowercased, no protocol, no path). The
+   `/public/branding?host=` endpoint scans this field to resolve a
+   hostname to a tenant pre-login.
+5. **Confirm `/public/branding?host=<new-host>`** returns the new tenant
+   before pointing real users at the domain.
+
+Single-domain alternative (skip 6.1 / 6.2 entirely):
+- Use one Amplify URL for everyone.
+- Tenant resolution falls back to the JWT claim (post-login) and the
+  bundled platform default (pre-login).
+- Loses pre-login per-tenant branding. Simpler operationally.
+
+#### 6.3 — Onboarding script
+
+`backend/onboard_tenant.py` — idempotent on the tenant row, safe to retry.
+
+```
+python backend/onboard_tenant.py \
+    --tenant-id kkjmiami \
+    --display-name "KKJ Miami" \
+    --legal-name "Kahal Kadosh Joseph of Miami" \
+    --admin-email shaul@kkjmiami.example \
+    --from-email noreply@kkjmiami.example \
+    --primary-color "#0a4d3d" \
+    --secondary-color "#1a8b6f" \
+    --accent-color "#d4af37" \
+    --domain portal.kkjmiami.example
+```
+
+What it does:
+1. Creates the `stcd_tenants` row (skips if exists; `--dry-run` available).
+2. Invites the first admin in Cognito with `custom:tenantId` stamped
+   immutably — the schema attribute can never be rewritten for the user's
+   lifetime, so this is the only chance to bind them.
+3. Prints a next-steps checklist: Sola credential collection, Amplify
+   custom-domain wiring, logo upload, first-admin login.
+
+Sola creds intentionally optional at onboarding — paste them in via a
+follow-up `dynamodb update-item` once the new tenant gets their merchant
+account. Until then, `_sola_post` fails closed for the new tenant
+(returns CONFIG error, no charge routes to STCD's account).
 
 ---
 
