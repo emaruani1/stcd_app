@@ -44,9 +44,20 @@ export function login(email, password) {
       onFailure: (err) => reject(err),
       newPasswordRequired: (userAttributes) => {
         // First-time sign-in. The UI will collect a brand-new password and
-        // call complete() — we never reuse the temp password.
+        // call complete() — we never reuse the temp password. Strip any
+        // attribute that Cognito should NOT see in the challenge response:
+        //  - email / email_verified: passing these back triggers re-verification.
+        //  - custom:custom:tenantId: schema-immutable (Mutable=false), so any
+        //    value in the payload — even the existing one — is rejected with
+        //    InvalidParameterException "Attribute cannot be updated."
+        //  - custom:custom:role / custom:custom:memberId: technically mutable
+        //    but already set at admin-create-user time; resending them is
+        //    redundant and risks an unintended overwrite if the value drifts.
         delete userAttributes.email_verified
         delete userAttributes.email
+        delete userAttributes['custom:custom:tenantId']
+        delete userAttributes['custom:custom:role']
+        delete userAttributes['custom:custom:memberId']
         resolve({
           kind: 'newPassword',
           complete: (newPassword) => new Promise((res, rej) => {
