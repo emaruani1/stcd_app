@@ -2909,6 +2909,13 @@ def get_tenant_me():
     out['logoUrl'] = _presigned_logo_url(tenant.get('logoS3Key'))
     out['solaXKeyLast4']    = tenant.get('solaXKeyLast4', '') or ''
     out['solaXKeyConfigured'] = bool(tenant.get('solaXKeyConfigured'))
+    # iFields key still lives on the row (it's the public iframe key, not a
+    # rotated secret), but we show only the last 4 in the Settings UI so the
+    # whole string doesn't clutter the form. Frontend rebuilds the iframe
+    # using the full value from /tenants/me/payment-config separately.
+    ifk = (tenant.get('solaIFieldsKey') or '').strip()
+    out['solaIFieldsKeyLast4']    = ifk[-4:] if len(ifk) >= 4 else ''
+    out['solaIFieldsKeyConfigured'] = bool(ifk)
     return respond(200, out)
 
 

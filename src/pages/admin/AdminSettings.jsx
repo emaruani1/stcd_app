@@ -16,30 +16,35 @@ export default function AdminSettings({
   const [savingBranding, setSavingBranding] = useState(false)
   const [logoUploading, setLogoUploading] = useState(false)
   // Gateway credentials — never pre-filled from the server (the xKey is
-  // redacted server-side). An empty submit is a no-op; only non-empty
-  // values get sent.
-  const [solaXKeyInput, setSolaXKeyInput] = useState('')
-  const [solaIFieldsKeyInput, setSolaIFieldsKeyInput] = useState('')
+  // redacted server-side, the iFields key is shown only as last-4). Each
+  // field opens its own inline editor; saving while collapsed is impossible
+  // by design so admins always make a deliberate decision per key.
+  const [editingKey, setEditingKey] = useState(null) // 'xKey' | 'iFields' | null
+  const [keyInput, setKeyInput] = useState('')
   const [savingGateway, setSavingGateway] = useState(false)
 
-  const saveGatewayKeys = async () => {
-    const newX = solaXKeyInput.trim()
-    const newI = solaIFieldsKeyInput.trim()
-    if (!newX && !newI) {
-      showToast('Enter at least one key to update')
+  const startEditKey = (which) => {
+    setEditingKey(which)
+    setKeyInput('')
+  }
+  const cancelEditKey = () => {
+    setEditingKey(null)
+    setKeyInput('')
+  }
+  const saveKey = async () => {
+    const v = keyInput.trim()
+    if (!v) {
+      showToast('Paste a key to save, or click Cancel')
       return
     }
     setSavingGateway(true)
     try {
-      const payload = {}
-      if (newX) payload.solaXKey = newX
-      if (newI) payload.solaIFieldsKey = newI
+      const payload = editingKey === 'xKey' ? { solaXKey: v } : { solaIFieldsKey: v }
       const updated = await api.updateTenant(payload)
       setTenantLocal(updated)
       await refreshTenant()
-      setSolaXKeyInput('')
-      setSolaIFieldsKeyInput('')
-      showToast('Payment gateway keys updated')
+      cancelEditKey()
+      showToast(editingKey === 'xKey' ? 'Sola xKey updated' : 'iFields key updated')
     } catch (e) {
       showToast('Error: ' + e.message)
     } finally {
@@ -844,61 +849,88 @@ export default function AdminSettings({
 
             <h2 className="section-title" style={{ marginTop: '2rem' }}>Payment gateway</h2>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
-              The Sola xKey routes every charge to your merchant account. The
-              iFields key drives the secure card iframe. Both must come from
-              your Sola dashboard. Saving the rest of the Branding form
-              leaves these untouched — only filled-in fields here get sent.
+              The Sola xKey routes every charge to your merchant account
+              (stored encrypted in SSM Parameter Store — never visible
+              after save). The iFields key drives the secure card iframe.
+              Both come from your Sola dashboard.
             </p>
-            <div className="form-row">
-              <div className="form-group">
-                <label>Sola xKey</label>
-                <input
-                  type="password"
-                  value={solaXKeyInput}
-                  onChange={e => setSolaXKeyInput(e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder={
-                    tenant.solaXKeyConfigured
-                      ? `Configured · ends in ${tenant.solaXKeyLast4 || '????'} — type to replace`
-                      : 'Not configured — paste new key'
-                  }
-                />
-              </div>
-              <div className="form-group">
-                <label>Sola iFields key</label>
-                <input
-                  type="password"
-                  value={solaIFieldsKeyInput}
-                  onChange={e => setSolaIFieldsKeyInput(e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder={
-                    tenant.solaIFieldsKey
-                      ? 'Configured — type to replace'
-                      : 'Not configured — paste new key'
-                  }
-                />
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
-              <button
-                className="pay-btn"
-                onClick={saveGatewayKeys}
-                disabled={savingGateway || (!solaXKeyInput.trim() && !solaIFieldsKeyInput.trim())}
-                style={{ padding: '8px 18px' }}
-              >
-                {savingGateway ? 'Updating...' : 'Update keys'}
-              </button>
-              <button
-                className="modal-btn-secondary"
-                onClick={() => { setSolaXKeyInput(''); setSolaIFieldsKeyInput('') }}
-                disabled={savingGateway}
-                style={{ padding: '8px 18px' }}
-              >
-                Cancel
-              </button>
-            </div>
+            {[
+              {
+                id: 'xKey',
+                label: 'Sola xKey',
+                last4: tenant.solaXKeyLast4 || '',
+                configured: !!tenant.solaXKeyConfigured,
+              },
+              {
+                id: 'iFields',
+                label: 'Sola iFields key',
+                last4: tenant.solaIFieldsKeyLast4 || '',
+                configured: !!tenant.solaIFieldsKeyConfigured,
+              },
+            ].map(row => {
+              const isEditing = editingKey === row.id
+              return (
+                <div key={row.id} style={{
+                  background: 'var(--bg-warm)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '0.85rem 1rem',
+                  marginBottom: '0.75rem',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: 220 }}>
+                      <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: 2 }}>{row.label}</div>
+                      <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                        {row.configured
+                          ? `•••• •••• •••• ${row.last4 || '????'}`
+                          : 'Not configured'}
+                      </div>
+                    </div>
+                    {!isEditing && (
+                      <button
+                        className="modal-btn-secondary"
+                        onClick={() => startEditKey(row.id)}
+                        style={{ padding: '6px 14px', fontSize: '0.85rem' }}
+                      >
+                        {row.configured ? 'Replace' : 'Set key'}
+                      </button>
+                    )}
+                  </div>
+                  {isEditing && (
+                    <div style={{ marginTop: '0.85rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                      <div className="form-group" style={{ flex: 1, minWidth: 220, margin: 0 }}>
+                        <label style={{ fontSize: '0.78rem' }}>Paste the new {row.label.toLowerCase()}</label>
+                        <input
+                          type="password"
+                          value={keyInput}
+                          onChange={e => setKeyInput(e.target.value)}
+                          autoComplete="off"
+                          spellCheck={false}
+                          autoFocus
+                          placeholder="Pasted value is masked"
+                        />
+                      </div>
+                      <button
+                        className="pay-btn"
+                        onClick={saveKey}
+                        disabled={savingGateway || !keyInput.trim()}
+                        style={{ padding: '8px 18px' }}
+                      >
+                        {savingGateway ? 'Saving...' : 'Save'}
+                      </button>
+                      <button
+                        className="modal-btn-secondary"
+                        onClick={cancelEditKey}
+                        disabled={savingGateway}
+                        style={{ padding: '8px 18px' }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
 
             <h2 className="section-title" style={{ marginTop: '2rem' }}>Receipts &amp; statements</h2>
             <div className="form-group">
