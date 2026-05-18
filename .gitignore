@@ -14,6 +14,11 @@ dist-ssr
 .env
 backend/lambda.zip
 backend/*.zip
+backend/replicator/*.zip
+backend/replicator/__pycache__/
+backend/replicator/invoke_meta.json
+backend/replicator/invoke_response.json
+backend/__pycache__/
 
 # Editor directories and files
 .vscode/*

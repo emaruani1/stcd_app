@@ -18,8 +18,13 @@ flipping reads.
 """
 import argparse
 import sys
+import time
 import boto3
 from botocore.exceptions import ClientError
+
+
+def _now_iso():
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
 
 
 def main():
@@ -70,6 +75,9 @@ def main():
         item = dict(row)
         item['tenantId'] = args.tenant
         # settingKey already present from source row
+        now = _now_iso()
+        item.setdefault('createdAt', now)
+        item['modifiedAt'] = now
         if args.dry_run:
             print(f'  [dry-run] would write tenantId={args.tenant} settingKey={key} (items count={len(item.get("items", []))})')
         else:

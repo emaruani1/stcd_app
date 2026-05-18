@@ -17,9 +17,23 @@ writes also land in v2 (and any backfill overwrite is harmless).
 """
 import argparse
 import sys
+import time
 import boto3
 from botocore.exceptions import ClientError
 from decimal import Decimal
+
+
+def _now_iso():
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+
+def _stamp(item):
+    """Ensure createdAt + modifiedAt on every migrated row. Preserves any
+    existing createdAt from the source row; modifiedAt always set to now."""
+    now = _now_iso()
+    item.setdefault('createdAt', now)
+    item['modifiedAt'] = now
+    return item
 
 
 def _t(d):
@@ -129,7 +143,7 @@ def main():
             print(f'  [dry-run] {preview}')
         else:
             try:
-                dst.put_item(Item=new_row)
+                dst.put_item(Item=_stamp(new_row))
                 written += 1
             except ClientError as e:
                 errors += 1

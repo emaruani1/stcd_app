@@ -4,6 +4,7 @@ Handles: Members, Transactions, Pledges, Settings, Sponsorships, Emails, Payment
 """
 import json
 import os
+import re
 import time
 import uuid
 import urllib.request
@@ -321,6 +322,56 @@ def _system_stamp_create():
         'createdByMemberId': '',
         'createdAt': _now_iso(),
     }
+
+
+# ===== Universal write-time timestamping =====
+# Every DynamoDB write — across every table — must stamp createdAt (on the
+# initial insert) and modifiedAt (on every mutation). These helpers are
+# composed into the table-wrapper functions below so individual call sites
+# can't accidentally skip them. Drives a downstream Streams-based backup
+# pipeline, so 100% coverage is load-bearing, not cosmetic.
+
+def _stamp_put_item(item):
+    """Stamp createdAt + modifiedAt on a put_item Item dict in place.
+    createdAt is preserved if the caller already set one (so audit stamps
+    from _actor_stamp_create win); modifiedAt is always set to now."""
+    now = _now_iso()
+    if item is None:
+        return item
+    item.setdefault('createdAt', now)
+    item['modifiedAt'] = now
+    return item
+
+
+def _stamp_update_kwargs(kwargs):
+    """Inject modifiedAt = :__ma into an update_item kwargs dict's
+    UpdateExpression. createdAt is never touched on update. Uses a __-
+    prefixed placeholder name so it can't collide with caller attrs."""
+    if kwargs is None:
+        return kwargs
+    now = _now_iso()
+    ue = (kwargs.get('UpdateExpression') or '').strip()
+    ean = dict(kwargs.get('ExpressionAttributeNames') or {})
+    eav = dict(kwargs.get('ExpressionAttributeValues') or {})
+    ean['#__ma'] = 'modifiedAt'
+    eav[':__ma'] = now
+    # If the expression already has a SET clause, append to it; otherwise
+    # add one. DynamoDB allows only one SET clause per UpdateExpression,
+    # so we can't just prepend a fresh one when SET already exists.
+    if re.search(r'(?i)\bSET\b', ue):
+        # Insert ', #__ma = :__ma' at the end of the SET clause (right
+        # before the next clause keyword or end-of-string).
+        ue = re.sub(
+            r'(?is)(\bSET\b\s+.*?)(\s+(?:REMOVE|ADD|DELETE)\b|$)',
+            r'\1, #__ma = :__ma\2',
+            ue, count=1,
+        )
+    else:
+        ue = ('SET #__ma = :__ma ' + ue).strip()
+    kwargs['UpdateExpression'] = ue
+    kwargs['ExpressionAttributeNames'] = ean
+    kwargs['ExpressionAttributeValues'] = eav
+    return kwargs
 
 
 # ===== Authorization helpers =====
@@ -821,12 +872,14 @@ def _members_put(item):
     composite PK is well-formed; memberId is coerced to string."""
     tenant_id = _require_tenant()
     v2_item = {**item, 'tenantId': tenant_id, 'memberId': str(item.get('memberId', ''))}
+    _stamp_put_item(v2_item)
     members_table_v2.put_item(Item=v2_item)
 
 
 def _members_update(member_id, **kwargs):
     """Wrap update_item — accepts UpdateExpression, ExpressionAttribute*."""
     tenant_id = _require_tenant()
+    _stamp_update_kwargs(kwargs)
     members_table_v2.update_item(Key={'tenantId': tenant_id, 'memberId': str(member_id)}, **kwargs)
 
 
@@ -1057,7 +1110,9 @@ def _txn_scan_all_for_tenant():
 
 
 def _txn_put(item):
-    transactions_table_v2.put_item(Item={**item, **_txn_v2_extra_attrs(item)})
+    v2_item = {**item, **_txn_v2_extra_attrs(item)}
+    _stamp_put_item(v2_item)
+    transactions_table_v2.put_item(Item=v2_item)
 
 
 def _txn_put_conditional(item, condition_expression=None):
@@ -1068,7 +1123,9 @@ def _txn_put_conditional(item, condition_expression=None):
     successful when a real write error happened.
     """
     try:
-        kw = {'Item': {**item, **_txn_v2_extra_attrs(item)}}
+        v2_item = {**item, **_txn_v2_extra_attrs(item)}
+        _stamp_put_item(v2_item)
+        kw = {'Item': v2_item}
         if condition_expression:
             kw['ConditionExpression'] = condition_expression
         transactions_table_v2.put_item(**kw)
@@ -1081,6 +1138,7 @@ def _txn_put_conditional(item, condition_expression=None):
 
 def _txn_update(member_id, transaction_id, **kwargs):
     tenant_id = _require_tenant()
+    _stamp_update_kwargs(kwargs)
     transactions_table_v2.update_item(
         Key={'tenantId': tenant_id, 'transactionId': transaction_id},
         **kwargs,
@@ -1817,11 +1875,14 @@ def _pledges_list_for_member(member_id):
 
 
 def _pledge_put(item):
-    pledges_table_v2.put_item(Item={**item, **_pledges_v2_extra_attrs(item)})
+    v2_item = {**item, **_pledges_v2_extra_attrs(item)}
+    _stamp_put_item(v2_item)
+    pledges_table_v2.put_item(Item=v2_item)
 
 
 def _pledge_update(member_id, pledge_id, **kwargs):
     tenant_id = _require_tenant()
+    _stamp_update_kwargs(kwargs)
     pledges_table_v2.update_item(Key={'tenantId': tenant_id, 'pledgeId': pledge_id}, **kwargs)
 
 
@@ -2163,12 +2224,14 @@ def _settings_read_all_for_tenant():
 def _settings_write(key, items, stamp):
     """Write one settingKey for the current tenant."""
     tenant_id = _require_tenant()
-    settings_table_v2.put_item(Item={
+    item = {
         'tenantId': tenant_id,
         'settingKey': key,
         'items': items,
         **stamp,
-    })
+    }
+    _stamp_put_item(item)
+    settings_table_v2.put_item(Item=item)
 
 
 def get_all_settings():
@@ -2217,7 +2280,9 @@ def _sponsorships_list_all_for_tenant():
 
 def _sponsorships_put(item):
     tenant_id = _require_tenant()
-    sponsorships_table_v2.put_item(Item={**item, 'tenantId': tenant_id})
+    v2_item = {**item, 'tenantId': tenant_id}
+    _stamp_put_item(v2_item)
+    sponsorships_table_v2.put_item(Item=v2_item)
 
 
 def _sponsorships_delete(date_key):
@@ -2231,6 +2296,7 @@ def _sponsorships_remove_field(date_key, field):
         'UpdateExpression': f'REMOVE #{field}',
         'ExpressionAttributeNames': {f'#{field}': field},
     }
+    _stamp_update_kwargs(kwargs)
     try:
         sponsorships_table_v2.update_item(Key={'tenantId': tenant_id, 'dateKey': date_key}, **kwargs)
     except Exception:
@@ -2362,7 +2428,9 @@ def _emails_list_all_for_tenant():
 
 def _emails_put(item):
     tenant_id = _require_tenant()
-    emails_table_v2.put_item(Item={**item, 'tenantId': tenant_id})
+    v2_item = {**item, 'tenantId': tenant_id}
+    _stamp_put_item(v2_item)
+    emails_table_v2.put_item(Item=v2_item)
 
 
 def get_emails():
@@ -2852,12 +2920,13 @@ def update_tenant_me(body):
         expr_names[safe] = k
         expr_parts.append(f"{safe} = :{k}")
         expr_values[f":{k}"] = v
-    tenants_table.update_item(
-        Key={'tenantId': tenant_id},
-        UpdateExpression='SET ' + ', '.join(expr_parts),
-        ExpressionAttributeNames=expr_names,
-        ExpressionAttributeValues=expr_values,
-    )
+    kw = {
+        'UpdateExpression': 'SET ' + ', '.join(expr_parts),
+        'ExpressionAttributeNames': expr_names,
+        'ExpressionAttributeValues': expr_values,
+    }
+    _stamp_update_kwargs(kw)
+    tenants_table.update_item(Key={'tenantId': tenant_id}, **kw)
     _bust_tenant_cache(tenant_id)
     # Return the updated public view so the frontend can re-apply branding
     # without a separate refetch.
@@ -2924,11 +2993,12 @@ def _get_tenant_sola_xkey(tenant_id):
         )
         # Clear the plaintext from DynamoDB; keep the last-4 + configured
         # flag so the Settings UI hint still works without the secret.
-        tenants_table.update_item(
-            Key={'tenantId': tenant_id},
-            UpdateExpression='SET solaXKey = :empty, solaXKeyLast4 = :l4, solaXKeyConfigured = :c',
-            ExpressionAttributeValues={':empty': '', ':l4': legacy_key[-4:], ':c': True},
-        )
+        kw = {
+            'UpdateExpression': 'SET solaXKey = :empty, solaXKeyLast4 = :l4, solaXKeyConfigured = :c',
+            'ExpressionAttributeValues': {':empty': '', ':l4': legacy_key[-4:], ':c': True},
+        }
+        _stamp_update_kwargs(kw)
+        tenants_table.update_item(Key={'tenantId': tenant_id}, **kw)
         _bust_tenant_cache(tenant_id)
         print(json.dumps({'level': 'info', 'event': 'sola_xkey_migrated_to_ssm', 'tenantId': tenant_id}))
     except Exception as e:
@@ -2949,21 +3019,23 @@ def _put_tenant_sola_xkey(tenant_id, new_key):
             Name=name, Value=new_key, Type='SecureString', Overwrite=True,
             Description=f'Sola merchant xKey for tenant {tenant_id}',
         )
-        tenants_table.update_item(
-            Key={'tenantId': tenant_id},
-            UpdateExpression='SET solaXKey = :empty, solaXKeyLast4 = :l4, solaXKeyConfigured = :c',
-            ExpressionAttributeValues={':empty': '', ':l4': new_key[-4:], ':c': True},
-        )
+        kw = {
+            'UpdateExpression': 'SET solaXKey = :empty, solaXKeyLast4 = :l4, solaXKeyConfigured = :c',
+            'ExpressionAttributeValues': {':empty': '', ':l4': new_key[-4:], ':c': True},
+        }
+        _stamp_update_kwargs(kw)
+        tenants_table.update_item(Key={'tenantId': tenant_id}, **kw)
     else:
         try:
             ssm.delete_parameter(Name=name)
         except ssm.exceptions.ParameterNotFound:
             pass
-        tenants_table.update_item(
-            Key={'tenantId': tenant_id},
-            UpdateExpression='SET solaXKey = :empty, solaXKeyLast4 = :empty, solaXKeyConfigured = :c',
-            ExpressionAttributeValues={':empty': '', ':c': False},
-        )
+        kw = {
+            'UpdateExpression': 'SET solaXKey = :empty, solaXKeyLast4 = :empty, solaXKeyConfigured = :c',
+            'ExpressionAttributeValues': {':empty': '', ':c': False},
+        }
+        _stamp_update_kwargs(kw)
+        tenants_table.update_item(Key={'tenantId': tenant_id}, **kw)
     _xkey_cache.pop(tenant_id, None)
     _bust_tenant_cache(tenant_id)
 
@@ -3058,11 +3130,13 @@ def _pm_put(item):
                'memberId': member_id,                       # always String in v2
                'tenantId': tenant_id,
                'memberIdPaymentMethodId': _pm_v2_range_key(member_id, payment_method_id)}
+    _stamp_put_item(v2_item)
     payment_methods_table_v2.put_item(Item=v2_item)
 
 
 def _pm_update(member_id, payment_method_id, **kwargs):
     tenant_id = _require_tenant()
+    _stamp_update_kwargs(kwargs)
     payment_methods_table_v2.update_item(
         Key={'tenantId': tenant_id, 'memberIdPaymentMethodId': _pm_v2_range_key(member_id, payment_method_id)},
         **kwargs,

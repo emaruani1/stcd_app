@@ -1,0 +1,26 @@
+{
+    "Name": "stcd_sponsorships_v2",
+    "KeySchema": [
+        {
+            "AttributeName": "tenantId",
+            "KeyType": "HASH"
+        },
+        {
+            "AttributeName": "dateKey",
+            "KeyType": "RANGE"
+        }
+    ],
+    "AttributeDefinitions": [
+        {
+            "AttributeName": "dateKey",
+            "AttributeType": "S"
+        },
+        {
+            "AttributeName": "tenantId",
+            "AttributeType": "S"
+        }
+    ],
+    "GSI": null,
+    "Billing": "PAY_PER_REQUEST",
+    "Stream": null
+}

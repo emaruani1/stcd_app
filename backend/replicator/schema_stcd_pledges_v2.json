@@ -1,0 +1,65 @@
+{
+    "Name": "stcd_pledges_v2",
+    "KeySchema": [
+        {
+            "AttributeName": "tenantId",
+            "KeyType": "HASH"
+        },
+        {
+            "AttributeName": "pledgeId",
+            "KeyType": "RANGE"
+        }
+    ],
+    "AttributeDefinitions": [
+        {
+            "AttributeName": "date",
+            "AttributeType": "S"
+        },
+        {
+            "AttributeName": "pledgeId",
+            "AttributeType": "S"
+        },
+        {
+            "AttributeName": "tenantId",
+            "AttributeType": "S"
+        },
+        {
+            "AttributeName": "tenantIdMemberId",
+            "AttributeType": "S"
+        }
+    ],
+    "GSI": [
+        {
+            "IndexName": "member-index",
+            "KeySchema": [
+                {
+                    "AttributeName": "tenantIdMemberId",
+                    "KeyType": "HASH"
+                },
+                {
+                    "AttributeName": "date",
+                    "KeyType": "RANGE"
+                }
+            ],
+            "Projection": {
+                "ProjectionType": "ALL"
+            },
+            "IndexStatus": "ACTIVE",
+            "ProvisionedThroughput": {
+                "NumberOfDecreasesToday": 0,
+                "ReadCapacityUnits": 0,
+                "WriteCapacityUnits": 0
+            },
+            "IndexSizeBytes": 23671,
+            "ItemCount": 109,
+            "IndexArn": "arn:aws:dynamodb:us-east-2:574630139917:table/stcd_pledges_v2/index/member-index",
+            "WarmThroughput": {
+                "ReadUnitsPerSecond": 12000,
+                "WriteUnitsPerSecond": 4000,
+                "Status": "ACTIVE"
+            }
+        }
+    ],
+    "Billing": "PAY_PER_REQUEST",
+    "Stream": null
+}

@@ -5,10 +5,23 @@ Run: py backend/upload_data.py
 import openpyxl
 import boto3
 import json
+import time
 import uuid
 import re
 from decimal import Decimal
 from datetime import datetime
+
+
+def _now_iso():
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+
+def _stamp(item):
+    """Stamp createdAt + modifiedAt on every uploaded row."""
+    now = _now_iso()
+    item.setdefault('createdAt', now)
+    item['modifiedAt'] = now
+    return item
 
 session = boto3.Session(profile_name='stcd', region_name='us-east-2')
 dynamodb = session.resource('dynamodb')
@@ -73,7 +86,7 @@ def upload_contacts():
             # Remove empty strings from item to keep DynamoDB clean
             item = {k: v for k, v in item.items() if v != '' and v != [] or k in ('memberId', 'lastName', 'firstName', 'balance')}
 
-            batch.put_item(Item=item)
+            batch.put_item(Item=_stamp(item))
             count += 1
 
             # Build name lookup for transaction matching
@@ -207,12 +220,12 @@ def upload_transactions(name_to_id):
                     unmatched.append(account_name)
                     continue
 
-                members_table.put_item(Item={
+                members_table.put_item(Item=_stamp({
                     'memberId': new_id,
                     'lastName': last,
                     'firstName': first,
                     'balance': Decimal('0'),
-                })
+                }))
                 name_to_id[account_name.strip().lower()] = new_id
                 unmatched_members_created[account_name] = new_id
                 member_id = new_id
@@ -237,7 +250,7 @@ def upload_transactions(name_to_id):
             pledge_type = str(description).strip() if description else ''
             occasion = str(category).strip() if category else ''
 
-            pledges_table.put_item(Item={
+            pledges_table.put_item(Item=_stamp({
                 'memberId': member_id,
                 'pledgeId': pledge_id,
                 'date': date_str,
@@ -250,7 +263,7 @@ def upload_transactions(name_to_id):
                 'canceled': False,
                 'paymentMethod': '',
                 'category': 'pledge',
-            })
+            }))
             pledge_count += 1
         else:
             # This is an actual transaction (payment)
@@ -267,7 +280,7 @@ def upload_transactions(name_to_id):
             elif txn_type == 'PURCHASE' and not description:
                 desc = 'Purchase'
 
-            transactions_table.put_item(Item={
+            transactions_table.put_item(Item=_stamp({
                 'memberId': member_id,
                 'transactionId': txn_id,
                 'txnDate': date_str,
@@ -279,7 +292,7 @@ def upload_transactions(name_to_id):
                 'description': desc,
                 'amount': amount_dec,
                 'method': payment_method,
-            })
+            }))
             txn_count += 1
 
     print(f"Uploaded {txn_count} transactions to stcd_transactions")
@@ -361,10 +374,10 @@ def upload_settings():
     }
 
     for key, value in settings.items():
-        settings_table.put_item(Item={
+        settings_table.put_item(Item=_stamp({
             'settingKey': key,
             'items': json.loads(json.dumps(value), parse_float=Decimal),
-        })
+        }))
 
     print(f"Uploaded {len(settings)} settings to stcd_settings")
 

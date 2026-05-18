@@ -74,6 +74,7 @@ def create_tenant_row(ddb, args):
         'address': args.address or '',
         'status': 'active',
         'createdAt': _now_iso(),
+        'modifiedAt': _now_iso(),
         'createdBy': 'onboard_tenant.py',
     }
     table = ddb.Table(TENANTS_TABLE)

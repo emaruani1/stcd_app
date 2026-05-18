@@ -1,0 +1,55 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadSourceTables",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:Scan",
+        "dynamodb:DescribeTable",
+        "dynamodb:GetItem",
+        "dynamodb:Query"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-east-2:574630139917:table/stcd_tenants",
+        "arn:aws:dynamodb:us-east-2:574630139917:table/stcd_settings_v2",
+        "arn:aws:dynamodb:us-east-2:574630139917:table/stcd_emails_v2",
+        "arn:aws:dynamodb:us-east-2:574630139917:table/stcd_sponsorships_v2",
+        "arn:aws:dynamodb:us-east-2:574630139917:table/stcd_members_v2",
+        "arn:aws:dynamodb:us-east-2:574630139917:table/stcd_payment_methods_v2",
+        "arn:aws:dynamodb:us-east-2:574630139917:table/stcd_pledges_v2",
+        "arn:aws:dynamodb:us-east-2:574630139917:table/stcd_transactions_v2"
+      ]
+    },
+    {
+      "Sid": "WriteBackupTables",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:DescribeTable",
+        "dynamodb:Scan"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-west-2:574630139917:table/stcd_tenants",
+        "arn:aws:dynamodb:us-west-2:574630139917:table/stcd_settings_v2",
+        "arn:aws:dynamodb:us-west-2:574630139917:table/stcd_emails_v2",
+        "arn:aws:dynamodb:us-west-2:574630139917:table/stcd_sponsorships_v2",
+        "arn:aws:dynamodb:us-west-2:574630139917:table/stcd_members_v2",
+        "arn:aws:dynamodb:us-west-2:574630139917:table/stcd_payment_methods_v2",
+        "arn:aws:dynamodb:us-west-2:574630139917:table/stcd_pledges_v2",
+        "arn:aws:dynamodb:us-west-2:574630139917:table/stcd_transactions_v2"
+      ]
+    },
+    {
+      "Sid": "Logs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:*:574630139917:*"
+    }
+  ]
+}
