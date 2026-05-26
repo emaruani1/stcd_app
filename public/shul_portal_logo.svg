@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="Shul Portal — Torah scroll">
+  <defs>
+    <linearGradient id="rollerGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#a17d2e"/>
+      <stop offset="0.5" stop-color="#e8c977"/>
+      <stop offset="1" stop-color="#a17d2e"/>
+    </linearGradient>
+    <linearGradient id="parchGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fffbea"/>
+      <stop offset="1" stop-color="#f4ecc8"/>
+    </linearGradient>
+    <linearGradient id="capGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#b08a36"/>
+      <stop offset="0.5" stop-color="#e8c977"/>
+      <stop offset="1" stop-color="#b08a36"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Keter Torah (crown) -->
+  <g stroke="#8a6a25" stroke-width="1.4">
+    <path d="M 78 28 L 86 18 L 94 28 L 100 12 L 106 28 L 114 18 L 122 28 L 122 34 L 78 34 Z" fill="#e8c977"/>
+    <circle cx="86" cy="18" r="2.4" fill="#fffbea"/>
+    <circle cx="100" cy="12" r="2.6" fill="#fffbea"/>
+    <circle cx="114" cy="18" r="2.4" fill="#fffbea"/>
+  </g>
+
+  <!-- Left roller (Atz Chayim) -->
+  <rect x="40" y="36" width="12" height="138" fill="url(#rollerGrad)"/>
+  <ellipse cx="46" cy="36" rx="14" ry="5.5" fill="url(#capGrad)" stroke="#8a6a25" stroke-width="1"/>
+  <ellipse cx="46" cy="174" rx="14" ry="5.5" fill="url(#capGrad)" stroke="#8a6a25" stroke-width="1"/>
+
+  <!-- Right roller (Atz Chayim) -->
+  <rect x="148" y="36" width="12" height="138" fill="url(#rollerGrad)"/>
+  <ellipse cx="154" cy="36" rx="14" ry="5.5" fill="url(#capGrad)" stroke="#8a6a25" stroke-width="1"/>
+  <ellipse cx="154" cy="174" rx="14" ry="5.5" fill="url(#capGrad)" stroke="#8a6a25" stroke-width="1"/>
+
+  <!-- Open parchment between rollers -->
+  <path d="M 52 44 L 148 44 L 148 166 L 52 166 Z" fill="url(#parchGrad)" stroke="#a17d2e" stroke-width="1.2"/>
+
+  <!-- Subtle curl shadow at parchment edges -->
+  <path d="M 52 44 Q 56 105 52 166" fill="none" stroke="#c6973f" stroke-width="1" opacity="0.45"/>
+  <path d="M 148 44 Q 144 105 148 166" fill="none" stroke="#c6973f" stroke-width="1" opacity="0.45"/>
+
+  <!-- Text lines on parchment (suggesting Hebrew script) -->
+  <g stroke="#1a365d" stroke-width="2.2" stroke-linecap="round" opacity="0.55">
+    <line x1="62" y1="60" x2="138" y2="60"/>
+    <line x1="62" y1="74" x2="128" y2="74"/>
+    <line x1="62" y1="88" x2="138" y2="88"/>
+    <line x1="62" y1="102" x2="122" y2="102"/>
+    <line x1="62" y1="116" x2="138" y2="116"/>
+    <line x1="62" y1="130" x2="130" y2="130"/>
+    <line x1="62" y1="144" x2="138" y2="144"/>
+  </g>
+</svg>

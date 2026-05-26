@@ -274,7 +274,7 @@ export default function Login({ onLogin }) {
             //  3. Mid-fetch fallback → platform brand again (cheap default,
             //     never an STCD-specific render leaking through).
             const isTenant = !!branding.tenantId
-            const logoSrc = branding.logoUrl || (isTenant ? '/stcd_logo.png' : '/shul_portal_logo.png')
+            const logoSrc = branding.logoUrl || (isTenant ? '/stcd_logo.png' : '/shul_portal_logo.svg')
             const logoClass = isTenant && !branding.logoUrl
               ? 'login-logo login-logo-default'
               : 'login-logo login-logo-uploaded'
