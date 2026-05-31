@@ -214,7 +214,7 @@ export default function Login({ onLogin }) {
     setError('')
     setLoading(true)
     try { await forgotPassword(email) } catch { /* never leak existence */ }
-    setSuccess('If this email is linked to an account, you will receive a verification code shortly. Enter it below to set a new password.')
+    setSuccess('If this email is linked to an active account, a verification code is on its way — check your inbox and your spam/junk folder, then enter it below. Never signed in before? A password reset won’t work yet — use the temporary password from your welcome email, or contact the synagogue office to have it resent.')
     setMode('confirm')
     setLoading(false)
   }
@@ -424,7 +424,7 @@ export default function Login({ onLogin }) {
         {mode === 'forgot' && (
           <form onSubmit={handleForgotPassword} className="login-form">
             <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
-              Enter your email address. If it&apos;s linked to an account, you&apos;ll receive a verification code you can paste below to set a new password.
+              Enter your email address. If it&apos;s linked to an active account, you&apos;ll receive a verification code (check your spam/junk folder too) that you can paste below to set a new password.
             </p>
             <div className="form-group">
               <label htmlFor="reset-email">Email Address</label>
@@ -456,8 +456,11 @@ export default function Login({ onLogin }) {
 
         {mode === 'confirm' && (
           <form onSubmit={handleConfirmReset} className="login-form">
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
               Enter the verification code sent to <strong>{email}</strong> and choose a new password.
+            </p>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '16px', lineHeight: 1.5 }}>
+              Didn&apos;t get a code? Check your spam/junk folder. If your account is new and you&apos;ve never signed in, there&apos;s no password to reset yet — use the temporary password from your welcome email, or contact the office to have it resent.
             </p>
             <div className="form-group">
               <label htmlFor="code">Verification Code</label>
