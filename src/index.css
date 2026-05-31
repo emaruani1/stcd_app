@@ -42,6 +42,10 @@
 
 html {
   font-size: 16px;
+  /* Safety net: prevent any single wide element from forcing the whole page
+     wider than the viewport (which makes phones render the app zoomed-out).
+     Legitimate wide content scrolls inside its own overflow-x:auto wrapper. */
+  overflow-x: hidden;
 }
 
 body {

@@ -187,7 +187,10 @@ export default function IFieldsCardForm({
         />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+      {/* auto-fit + minmax keeps each field >=140px: 3-up on desktop, but it
+          wraps to 2-up (then 1-up) on phones so the CVV iframe never shrinks
+          to an unreadable sliver. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
         <label style={{ display: 'grid', gap: 6 }}>
           <span style={labelStyle}>Exp (MMYY)</span>
           <input

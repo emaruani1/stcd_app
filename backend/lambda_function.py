@@ -349,10 +349,18 @@ def _stamp_update_kwargs(kwargs):
     prefixed placeholder name so it can't collide with caller attrs."""
     if kwargs is None:
         return kwargs
-    now = _now_iso()
     ue = (kwargs.get('UpdateExpression') or '').strip()
     ean = dict(kwargs.get('ExpressionAttributeNames') or {})
     eav = dict(kwargs.get('ExpressionAttributeValues') or {})
+    # Idempotency guard: some callers already write modifiedAt themselves
+    # (e.g. via _actor_stamp_modify folded into the SET clause, or an explicit
+    # #modifiedAt = :ca). Injecting a second path makes DynamoDB reject the
+    # update with "Two document paths overlap ... [modifiedAt]". Detect a
+    # caller-supplied modifiedAt — as a literal attr in the expression, or via
+    # any ExpressionAttributeNames alias mapping to 'modifiedAt' — and skip.
+    if 'modifiedAt' in ean.values() or re.search(r'\bmodifiedAt\b', ue):
+        return kwargs
+    now = _now_iso()
     ean['#__ma'] = 'modifiedAt'
     eav[':__ma'] = now
     # If the expression already has a SET clause, append to it; otherwise
@@ -2630,10 +2638,15 @@ def cognito_enable_user(body):
 
 
 def cognito_reset_password(body):
-    """Force a password reset — sends a new temporary password via email."""
+    """Force a password reset — emails the user a reset code.
+
+    For users who have never activated (still FORCE_CHANGE_PASSWORD),
+    admin_reset_user_password is invalid ("password cannot be reset in the
+    current state"), so we re-send the invite with a fresh temporary password
+    instead — the correct way to recover a pending account."""
     if not _is_admin():
         return _forbid()
-    email = body.get('email', '').strip()
+    email = body.get('email', '').strip().lower()
     if not email:
         return respond(400, {'error': 'email is required'})
     username = _resolve_cognito_username(email)
@@ -2643,6 +2656,19 @@ def cognito_reset_password(body):
     if guard:
         return guard
     try:
+        status = cognito.admin_get_user(
+            UserPoolId=COGNITO_POOL_ID, Username=username
+        ).get('UserStatus')
+        if status == 'FORCE_CHANGE_PASSWORD':
+            # Pool uses email-as-username, so admin_create_user must be called
+            # with the EMAIL, not the internal sub Username (see resend-invite).
+            cognito.admin_create_user(
+                UserPoolId=COGNITO_POOL_ID,
+                Username=email,
+                MessageAction='RESEND',
+                DesiredDeliveryMediums=['EMAIL'],
+            )
+            return respond(200, {'message': 'A new temporary password was emailed (account was still pending activation)'})
         cognito.admin_reset_user_password(UserPoolId=COGNITO_POOL_ID, Username=username)
         return respond(200, {'message': 'Password reset email sent'})
     except Exception as e:
@@ -2667,9 +2693,14 @@ def cognito_resend_invite(body):
     if guard:
         return guard
     try:
+        # The pool is configured with UsernameAttributes=['email'], so the
+        # stored Username is an internal UUID (sub). admin_create_user (even
+        # with MessageAction='RESEND') validates Username against the pool's
+        # email format and rejects the sub with "Username should be an email".
+        # The email IS a valid username for this pool, so pass that instead.
         cognito.admin_create_user(
             UserPoolId=COGNITO_POOL_ID,
-            Username=username,
+            Username=email,
             MessageAction='RESEND',
             DesiredDeliveryMediums=['EMAIL'],
         )
@@ -3268,6 +3299,20 @@ def list_payment_methods(member_id):
     if not (_is_admin() or _is_self(member_id)):
         return _forbid()
     items = _pm_list_for_member(member_id)
+
+    # Freshest first, default card pinned to the top. We must sort on a numeric
+    # timestamp: createdAt may be a unix-epoch int (charge-and-save path) OR an
+    # ISO-8601 string (add-card path, stamped by _stamp_put_item) — taking a
+    # unary minus on the string raised "bad operand type for unary -: 'str'".
+    # Prefer the int createdAtEpoch, fall back to a numeric createdAt, else 0.
+    def _pm_recency(it):
+        epoch = it.get('createdAtEpoch')
+        if not isinstance(epoch, (int, float, Decimal)):
+            ca = it.get('createdAt')
+            epoch = ca if isinstance(ca, (int, float, Decimal)) else 0
+        return (not bool(it.get('isDefault')), -int(epoch))
+    items.sort(key=_pm_recency)
+
     # Strip the actual token from the response — frontend never sees it
     safe = []
     for it in items:
@@ -3282,7 +3327,6 @@ def list_payment_methods(member_id):
             'isDefault': bool(it.get('isDefault', False)),
             'createdAt': it.get('createdAt'),
         })
-    safe.sort(key=lambda x: (not x['isDefault'], -(x.get('createdAt') or 0)))
     return respond(200, {'paymentMethods': safe})
 
 
